@@ -18,7 +18,7 @@ export const SkillManifestSchema = z.object({
   promotedAt: z.string().datetime().nullable(),
   sourceRunId: z.string().nullable(),
   // Powerplant computes this — never trust a value supplied by the imported package.
-  // null until Gate 2 runs.
+  // Set to the canonical SHA-256 payload hash by Gate 2 during import.
   sha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   evaluationPassed: z.boolean(),
   evaluationAt: z.string().datetime().nullable(),
@@ -63,7 +63,7 @@ const baseEvent = z.object({
 })
 
 export const SkillAuditEventSchema = z.discriminatedUnion('event', [
-  // Successful import — Gates 0 and 1 both passed.
+  // Successful import — Gates 0 through 3 passed.
   baseEvent.extend({
     event: z.literal('imported'),
     candidateId: z.string().uuid(),
@@ -71,8 +71,8 @@ export const SkillAuditEventSchema = z.discriminatedUnion('event', [
     contentHash: z.string().nullable(),
   }),
 
-  // Import rejected at Gate 0 (no snapshot created) or Gate 1 (snapshot moved to quarantine).
-  // candidateId is null for Gate 0 rejections.
+  // Import rejected — candidateId is null for Gate 0 rejections.
+  // Gate 1/2/3 rejections have a non-null candidateId but delete staging (no payload retained).
   baseEvent.extend({
     event: z.literal('import-rejected'),
     sourcePath: z.string(),

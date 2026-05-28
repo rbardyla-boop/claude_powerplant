@@ -285,7 +285,7 @@ describe('Gate 0 rejection stops all later processing', () => {
 
 // ── Successful ingestion ──────────────────────────────────────────────────────
 
-describe('successful ingestion (Gates 0 and 1)', () => {
+describe('successful ingestion (Gates 0 through 3)', () => {
   test('valid-minimal fixture is accepted and snapshot is isolated from source', async () => {
     const src = fixturePath('valid-minimal')
     const result = await ingestSkillPackage(src)
@@ -294,8 +294,9 @@ describe('successful ingestion (Gates 0 and 1)', () => {
     const success = result as IngestionSuccess
 
     expect(success.name).toBe('minimal-skill')
-    expect(success.gatesCompleted).toEqual(['GATE_0', 'GATE_1'])
+    expect(success.gatesCompleted).toEqual(['GATE_0', 'GATE_1', 'GATE_2', 'GATE_3'])
     expect(success.candidateId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(success.contentHash).toMatch(/^[a-f0-9]{64}$/)
 
     // Snapshot exists in candidates/ with the original content intact
     expect(fs.existsSync(success.candidatePath)).toBe(true)
@@ -308,13 +309,13 @@ describe('successful ingestion (Gates 0 and 1)', () => {
     // Staging directory is gone — renamed atomically to candidates/
     expect(fs.existsSync(path.join(getStagingDir(), success.candidateId))).toBe(false)
 
-    // Audit log records 'imported' event
+    // Audit log records 'imported' event with the Gate 2 canonical hash
     const auditLog = readAuditLog()
     const event = JSON.parse(auditLog.trim().split('\n')[0] ?? '')
     expect(event.event).toBe('imported')
     expect(event.name).toBe('minimal-skill')
     expect(event.candidateId).toBe(success.candidateId)
-    expect(event.contentHash).toBeNull() // Gate 2 not yet run
+    expect(event.contentHash).toMatch(/^[a-f0-9]{64}$/)
   })
 
   test('valid-minimal: source manifest.json is preserved unchanged in snapshot', async () => {
@@ -331,13 +332,13 @@ describe('successful ingestion (Gates 0 and 1)', () => {
     )
     expect(snapshotManifest).toEqual(srcManifest)
 
-    // Powerplant metadata has the normalized id (candidateId parameter)
+    // Powerplant metadata has the normalized id and Gate 2 canonical hash
     const meta = JSON.parse(
       fs.readFileSync(path.join(success.candidatePath, '.powerplant-meta.json'), 'utf-8')
     )
     expect(meta.id).toBe(success.candidateId)
     expect(meta.name).toBe('minimal-skill')
-    expect(meta.sha256).toBeNull()
+    expect(meta.sha256).toMatch(/^[a-f0-9]{64}$/)
   })
 
   test('skill-no-manifest: snapshot file tree is unchanged; skeleton in .powerplant-meta.json', async () => {
@@ -364,12 +365,12 @@ describe('successful ingestion (Gates 0 and 1)', () => {
     const snapContent = fs.readFileSync(path.join(success.candidatePath, 'SKILL.md'), 'utf-8')
     expect(snapContent).toBe(srcContent)
 
-    // Powerplant metadata is the skeleton derived from frontmatter
+    // Powerplant metadata is the skeleton derived from frontmatter, with Gate 2 hash
     const meta = JSON.parse(
       fs.readFileSync(path.join(success.candidatePath, '.powerplant-meta.json'), 'utf-8')
     )
     expect(meta.name).toBe('no-manifest-skill')
-    expect(meta.sha256).toBeNull()
+    expect(meta.sha256).toMatch(/^[a-f0-9]{64}$/)
     expect(meta.evaluationPassed).toBe(false)
   })
 
@@ -401,7 +402,7 @@ describe('successful ingestion (Gates 0 and 1)', () => {
 // ── Gate 1 failure ────────────────────────────────────────────────────────────
 
 describe('Gate 1 rejection', () => {
-  test('rejects a package with invalid skill name in manifest; snapshot moved to quarantine only', async () => {
+  test('rejects a package with invalid skill name in manifest; staging deleted, no payload retained', async () => {
     const src = fixturePath('gate1-invalid-name')
     const knownId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
     const result = await ingestSkillPackage(src, {}, { candidateId: knownId })
@@ -416,11 +417,11 @@ describe('Gate 1 rejection', () => {
     // candidates/ must never have been created for this candidateId
     expect(fs.existsSync(path.join(getCandidatesDir(), knownId))).toBe(false)
 
-    // Snapshot is in quarantine
-    expect(fs.existsSync(path.join(getQuarantineDir(), knownId))).toBe(true)
-
-    // Staging cleaned up (moved to quarantine)
+    // Phase 1B: staging is deleted on Gate 1 failure — no payload retained
     expect(fs.existsSync(path.join(getStagingDir(), knownId))).toBe(false)
+
+    // No quarantine copy — unscanned payloads must not be stored durably
+    expect(fs.existsSync(path.join(getQuarantineDir(), knownId))).toBe(false)
 
     // Audit event has Gate 1 and non-null candidateId
     const auditLog = readAuditLog()
@@ -941,8 +942,8 @@ describe('atomic publication: candidates/ absent during copy', () => {
   })
 })
 
-describe('atomic publication: Gate 1 failure — snapshot goes to quarantine, never candidates/', () => {
-  test('candidates/ not created when Gate 1 fails; quarantine has the snapshot', async () => {
+describe('atomic publication: Gate 1 failure — staging deleted, no payload retained', () => {
+  test('candidates/ not created when Gate 1 fails; staging deleted, quarantine empty', async () => {
     const src = fixturePath('gate1-invalid-name')
     const knownId = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
 
@@ -965,10 +966,10 @@ describe('atomic publication: Gate 1 failure — snapshot goes to quarantine, ne
     expect(candidatesDirExistedDuringCopy).toBe(false)
     // candidates/<uuid> does not exist
     expect(fs.existsSync(path.join(getCandidatesDir(), knownId))).toBe(false)
-    // Staging cleaned up (moved to quarantine)
+    // Phase 1B: staging is deleted on Gate 1 failure — no payload retained
     expect(fs.existsSync(path.join(getStagingDir(), knownId))).toBe(false)
-    // Quarantine has the snapshot
-    expect(fs.existsSync(path.join(getQuarantineDir(), knownId))).toBe(true)
+    // No quarantine copy — unscanned payloads are not stored durably
+    expect(fs.existsSync(path.join(getQuarantineDir(), knownId))).toBe(false)
   })
 })
 
@@ -1040,13 +1041,13 @@ describe('atomic publication: successful import — complete candidate, staging 
     // Payload is unmodified — snapshot content equals source content
     expect(fs.readFileSync(path.join(candidatePath, 'SKILL.md'), 'utf-8')).toBe('# Test skill\n')
 
-    // Powerplant metadata is the normalized manifest, not the source manifest
+    // Powerplant metadata has the normalized manifest with Gate 2 canonical hash
     const meta = JSON.parse(
       fs.readFileSync(path.join(candidatePath, '.powerplant-meta.json'), 'utf-8')
     )
     expect(meta.id).toBe(knownId)
     expect(meta.name).toBe('test-skill')
-    expect(meta.sha256).toBeNull()
+    expect(meta.sha256).toMatch(/^[a-f0-9]{64}$/)
 
     // candidatePath matches the returned path
     expect(success.candidatePath).toBe(candidatePath)
@@ -1082,5 +1083,207 @@ describe('atomic publication: destination collision fails closed', () => {
     expect(
       fs.readFileSync(path.join(existingCandidatePath, 'existing.txt'), 'utf-8')
     ).toBe('pre-existing content')
+  })
+})
+
+// ── Gate 2+3: canonical hash and secret/content scan ─────────────────────────
+// Phase 1B: candidates/ is published only after Gates 0–3 pass.
+
+describe('Gate 2+3: canonical hash recorded in sidecar and audit', () => {
+  test('successful import populates sha256 in .powerplant-meta.json', async () => {
+    const src = fixturePath('valid-minimal')
+    const result = await ingestSkillPackage(src)
+
+    expect(result.success).toBe(true)
+    if (!result.success) return
+
+    const meta = JSON.parse(
+      fs.readFileSync(path.join(result.candidatePath, '.powerplant-meta.json'), 'utf-8')
+    )
+    expect(meta.sha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(meta.sha256).toBe(result.contentHash)
+  })
+
+  test('two imports of identical content produce the same canonical hash', async () => {
+    const src = fixturePath('valid-minimal')
+    const r1 = await ingestSkillPackage(src)
+    const r2 = await ingestSkillPackage(src)
+
+    expect(r1.success).toBe(true)
+    expect(r2.success).toBe(true)
+    if (!r1.success || !r2.success) return
+
+    expect(r1.contentHash).toBe(r2.contentHash)
+  })
+
+  test('candidate is NOT visible in candidates/ during Gate 2+3 (only after)', async () => {
+    const src = makeTmpSourceDir('gate23-timing')
+    writeFile(src, 'SKILL.md', '# Test\n')
+    writeFile(src, 'manifest.json', JSON.stringify({
+      schemaVersion: 1, id: '00000000-0000-0000-0000-000000000020', name: 'test-skill',
+      version: 1, description: 'Test', tags: [], createdAt: '2026-01-01T00:00:00.000Z',
+      promotedAt: null, sourceRunId: null, sha256: null, evaluationPassed: false, evaluationAt: null,
+    }))
+    const knownId = '11111111-1111-1111-1111-111111111111'
+
+    let candidateExistedDuringCopy = false
+    const result = await ingestSkillPackage(src, {}, {
+      candidateId: knownId,
+      copyHooks: {
+        afterChunk: () => {
+          // candidates/ must not contain knownId while copy is in progress
+          if (fs.existsSync(path.join(getCandidatesDir(), knownId))) {
+            candidateExistedDuringCopy = true
+          }
+        },
+      },
+    })
+
+    expect(result.success).toBe(true)
+    // candidates/ was NOT visible during copy/Gate 2+3 window
+    expect(candidateExistedDuringCopy).toBe(false)
+    // candidates/ IS visible after atomic publication
+    expect(fs.existsSync(path.join(getCandidatesDir(), knownId))).toBe(true)
+  })
+
+  test('audit event for successful import has non-null contentHash', async () => {
+    const src = fixturePath('valid-minimal')
+    const result = await ingestSkillPackage(src)
+    expect(result.success).toBe(true)
+
+    const auditLog = readAuditLog()
+    const event = JSON.parse(auditLog.trim().split('\n')[0] ?? '')
+    expect(event.event).toBe('imported')
+    expect(event.contentHash).toMatch(/^[a-f0-9]{64}$/)
+  })
+})
+
+describe('Gate 3: secret-bearing packages are rejected at import', () => {
+  test('package with PEM private key is rejected at Gate 3 with no candidate published', async () => {
+    const src = fixturePath('gate3-private-key')
+    const result = await ingestSkillPackage(src)
+
+    expect(result.success).toBe(false)
+    if (result.success) return
+
+    expect(result.failedGate).toBe('GATE_3')
+    expect(result.candidateId).not.toBeNull()
+    expect(result.reason).toMatch(/credential material|private.key/i)
+
+    // No candidate published
+    expect(fs.existsSync(getCandidatesDir())).toBe(false)
+
+    // Staging cleaned up
+    expect(fs.existsSync(path.join(getStagingDir(), result.candidateId!))).toBe(false)
+
+    // Audit records Gate 3 rejection
+    const auditLog = readAuditLog()
+    const event = JSON.parse(auditLog.trim().split('\n')[0] ?? '')
+    expect(event.event).toBe('import-rejected')
+    expect(event.failedGate).toBe('GATE_3')
+  })
+
+  test('package with API token is rejected at Gate 3', async () => {
+    const src = fixturePath('gate3-api-key')
+    const result = await ingestSkillPackage(src)
+
+    expect(result.success).toBe(false)
+    if (result.success) return
+    expect(result.failedGate).toBe('GATE_3')
+  })
+
+  test('package with secret env assignment is rejected at Gate 3', async () => {
+    const src = fixturePath('gate3-env-secret')
+    const result = await ingestSkillPackage(src)
+
+    expect(result.success).toBe(false)
+    if (result.success) return
+    expect(result.failedGate).toBe('GATE_3')
+  })
+
+  test('Gate 3 rejection reason does not contain credential bytes', async () => {
+    const src = fixturePath('gate3-private-key')
+    const result = await ingestSkillPackage(src)
+
+    expect(result.success).toBe(false)
+    if (result.success) return
+
+    // The reason string must not include the base64 key material from the fixture
+    expect(result.reason).not.toContain('MIIEowIBAAKCAQEA')
+  })
+
+  test('package with only placeholder credentials is accepted', async () => {
+    const src = fixturePath('gate3-placeholder-only')
+    const result = await ingestSkillPackage(src)
+
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(result.gatesCompleted).toEqual(['GATE_0', 'GATE_1', 'GATE_2', 'GATE_3'])
+  })
+})
+
+describe('Gate 3: NUL bytes reject at import', () => {
+  test('package with NUL byte in payload file is rejected at Gate 3', async () => {
+    const src = makeTmpSourceDir('nul-byte-skill')
+    const skillContent = Buffer.concat([
+      Buffer.from('# Test Skill\n\nThis is a test.\n', 'utf-8'),
+      Buffer.from([0x00]),
+      Buffer.from('\nSome more content\n', 'utf-8'),
+    ])
+    writeFile(src, 'manifest.json', JSON.stringify({
+      schemaVersion: 1, id: '00000000-0000-0000-0000-000000000022', name: 'nul-skill',
+      version: 1, description: 'NUL test', tags: [], createdAt: '2026-01-01T00:00:00.000Z',
+      promotedAt: null, sourceRunId: null, sha256: null, evaluationPassed: false, evaluationAt: null,
+    }))
+    // Write SKILL.md with NUL bytes using binary write
+    const skillMdPath = path.join(src, 'SKILL.md')
+    fs.writeFileSync(skillMdPath, skillContent)
+
+    const result = await ingestSkillPackage(src)
+
+    expect(result.success).toBe(false)
+    if (result.success) return
+    expect(result.failedGate).toBe('GATE_3')
+    expect(result.reason).toMatch(/nul bytes/i)
+    expect(fs.existsSync(getCandidatesDir())).toBe(false)
+  })
+})
+
+describe('Gate 3: invalid UTF-8 rejects at import', () => {
+  test('package with invalid UTF-8 in payload file is rejected at Gate 3', async () => {
+    const src = makeTmpSourceDir('invalid-utf8-skill')
+    writeFile(src, 'manifest.json', JSON.stringify({
+      schemaVersion: 1, id: '00000000-0000-0000-0000-000000000023', name: 'utf8-skill',
+      version: 1, description: 'UTF-8 test', tags: [], createdAt: '2026-01-01T00:00:00.000Z',
+      promotedAt: null, sourceRunId: null, sha256: null, evaluationPassed: false, evaluationAt: null,
+    }))
+    // Write SKILL.md with invalid UTF-8 (lone 0x80 continuation byte)
+    const invalidBuf = Buffer.concat([
+      Buffer.from('# Test\n\n', 'utf-8'),
+      Buffer.from([0x80]),
+      Buffer.from('\nMore content\n', 'utf-8'),
+    ])
+    fs.writeFileSync(path.join(src, 'SKILL.md'), invalidBuf)
+
+    const result = await ingestSkillPackage(src)
+
+    expect(result.success).toBe(false)
+    if (result.success) return
+    expect(result.failedGate).toBe('GATE_3')
+    expect(result.reason).toMatch(/invalid utf-8/i)
+    expect(fs.existsSync(getCandidatesDir())).toBe(false)
+  })
+})
+
+describe('Gate 2+3: audit records distinguish GATE_2 from GATE_3', () => {
+  test('Gate 3 secret rejection is recorded as GATE_3 in audit log', async () => {
+    const src = fixturePath('gate3-private-key')
+    await ingestSkillPackage(src)
+
+    const auditLog = readAuditLog()
+    const event = JSON.parse(auditLog.trim().split('\n')[0] ?? '')
+    expect(event.failedGate).toBe('GATE_3')
+    // Audit log must not contain the private key bytes
+    expect(auditLog).not.toContain('MIIEowIBAAKCAQEA')
   })
 })

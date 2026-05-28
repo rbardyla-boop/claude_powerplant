@@ -6,11 +6,13 @@ import {
   getCandidatePath,
   getStagingDir,
   getStagingPath,
-  getSkillQuarantineCandidatePath,
+  getStagingMetaPath,
   POWERPLANT_META_FILENAME,
 } from './skill-paths.js'
 import { appendAuditEvent } from './skill-audit.js'
 import { validateCandidateSchema } from './candidate-store.js'
+import { walkPayloadFiles, buildCanonicalHash } from './skill-hash.js'
+import { scanFileBuffer } from './skill-scan.js'
 
 // ── Gate 0 limits ─────────────────────────────────────────────────────────────
 
@@ -97,12 +99,13 @@ export interface IngestionSuccess {
   candidateId: string
   candidatePath: string
   name: string
-  gatesCompleted: ['GATE_0', 'GATE_1']
+  contentHash: string
+  gatesCompleted: ['GATE_0', 'GATE_1', 'GATE_2', 'GATE_3']
 }
 
 export interface IngestionFailure {
   success: false
-  failedGate: 'GATE_0' | 'GATE_1'
+  failedGate: 'GATE_0' | 'GATE_1' | 'GATE_2' | 'GATE_3'
   reason: string
   candidateId: string | null
 }
@@ -450,16 +453,89 @@ export async function copyToSnapshot(
   return { success: true }
 }
 
+// ── Gate 2 + Gate 3: one-pass canonical hash and secret scan ─────────────────
+//
+// Both gates operate over the same sorted payload traversal of the staging
+// snapshot, reading each file exactly once. This eliminates any race between
+// a hash pass and a separate scan pass over the same Powerplant-controlled
+// staging snapshot.
+//
+// Gate 2 failure: GATE_2 — integrity or read error during canonical hash
+// Gate 3 failure: GATE_3 — UTF-8/NUL violation or credential pattern detected
+
+interface Gate23Success {
+  success: true
+  contentHash: string
+}
+
+interface Gate23Failure {
+  success: false
+  failedGate: 'GATE_2' | 'GATE_3'
+  reason: string   // redacted — never contains matched secret bytes
+}
+
+type Gate23Result = Gate23Success | Gate23Failure
+
+function runGate23(stagingPath: string): Gate23Result {
+  const walkResult = walkPayloadFiles(stagingPath)
+  if (!walkResult.success) {
+    return { success: false, failedGate: 'GATE_2', reason: walkResult.reason }
+  }
+
+  const { files } = walkResult
+  const contents = new Map<string, Buffer>()
+  const allFindings: Array<{ ruleId: string; relativePath: string }> = []
+
+  for (const { normalizedRelPath, absPath } of files) {
+    let buf: Buffer
+    try {
+      buf = fs.readFileSync(absPath)
+    } catch (err) {
+      return {
+        success: false,
+        failedGate: 'GATE_2',
+        reason: `Cannot read staged payload file: ${normalizedRelPath}: ${(err as Error).message}`,
+      }
+    }
+
+    const scanResult = scanFileBuffer(buf, normalizedRelPath)
+    if (!scanResult.valid) {
+      const label = scanResult.ruleId === 'NUL_BYTES' ? 'NUL bytes' : 'invalid UTF-8'
+      return {
+        success: false,
+        failedGate: 'GATE_3',
+        reason: `Payload file rejected (${label}): ${normalizedRelPath}`,
+      }
+    }
+
+    allFindings.push(...scanResult.findings)
+    contents.set(normalizedRelPath, buf)
+  }
+
+  if (allFindings.length > 0) {
+    const first = allFindings[0]!
+    return {
+      success: false,
+      failedGate: 'GATE_3',
+      reason: `Credential material detected [${first.ruleId}] in: ${first.relativePath}`,
+    }
+  }
+
+  const contentHash = buildCanonicalHash(files, contents)
+  return { success: true, contentHash }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 //
-// Ingestion flow:
-//   1. Gate 0 walk   — validate filesystem structure; reject immediately on violation
-//   2. Bounded copy  — write package into skills/.staging/<uuid>/ (never candidates/)
-//   3. Gate 1        — validate schema and identity against the staging snapshot
-//   4. Publish       — atomic rename staging/<uuid>/ → candidates/<uuid>/
+// Phase 1B ingestion flow:
+//   1. Gate 0 walk       — validate filesystem structure
+//   2. Bounded copy      — write into skills/.staging/<uuid>/ (never candidates/)
+//   3. Gate 1            — schema and identity validation in staging
+//   4. Gates 2 + 3       — canonical hash + secret/content scan (one pass)
+//   5. Write sidecar     — .powerplant-meta.json with computed hash into staging
+//   6. Atomic publish    — rename staging/<uuid>/ → candidates/<uuid>/
 //
-// candidates/<uuid>/ is only visible after step 4 succeeds.
-// A partially copied or Gate-1-rejected package appears only under staging/ or quarantine/.
+// Failure at any gate deletes staging — no unscanned payload is retained.
 
 export async function ingestSkillPackage(
   sourcePath: string,
@@ -555,17 +631,9 @@ export async function ingestSkillPackage(
   const gate1Result = await validateCandidateSchema(stagingPath, candidateId)
 
   if (!gate1Result.success) {
-    // Gate 1 failure: move the complete staging snapshot to quarantine.
-    // The snapshot is never exposed under candidates/.
-    const quarantinePath = getSkillQuarantineCandidatePath(candidateId)
-    try {
-      fs.mkdirSync(path.dirname(quarantinePath), { recursive: true })
-      fs.renameSync(stagingPath, quarantinePath)
-    } catch {
-      // If rename fails (e.g., cross-device), clean up staging instead.
-      try { fs.rmSync(stagingPath, { recursive: true, force: true }) } catch { /* best-effort */ }
-    }
-
+    // Phase 1B: delete staging on Gate 1 failure — no payload retained.
+    // A package that has not passed Gate 3 must not be stored in durable state.
+    try { fs.rmSync(stagingPath, { recursive: true, force: true }) } catch { /* best-effort */ }
     appendAuditEvent({
       event: 'import-rejected',
       command: 'powerplant skill import',
@@ -577,19 +645,39 @@ export async function ingestSkillPackage(
     return { success: false, failedGate: 'GATE_1', reason: gate1Result.reason, candidateId }
   }
 
-  // Both gates passed.
-  //
-  // Write Powerplant-owned metadata into the staging snapshot. This file is always
-  // distinct from any user-supplied manifest.json and must never overwrite it.
-  fs.writeFileSync(
-    path.join(stagingPath, POWERPLANT_META_FILENAME),
-    JSON.stringify(gate1Result.manifest, null, 2),
-    'utf-8'
-  )
+  // Gates 2 + 3: canonical hash computation and secret/content scan.
+  // One bounded traversal over the staging snapshot reads each file exactly once.
+  const gate23Result = runGate23(stagingPath)
+
+  if (!gate23Result.success) {
+    try { fs.rmSync(stagingPath, { recursive: true, force: true }) } catch { /* best-effort */ }
+    appendAuditEvent({
+      event: 'import-rejected',
+      command: 'powerplant skill import',
+      sourcePath: resolvedSource,
+      failedGate: gate23Result.failedGate,
+      reason: gate23Result.reason,
+      candidateId,
+    })
+    return {
+      success: false,
+      failedGate: gate23Result.failedGate,
+      reason: gate23Result.reason,
+      candidateId,
+    }
+  }
+
+  const { contentHash } = gate23Result
+
+  // All gates passed. Write sidecar into staging before atomic publication.
+  // The sidecar is the Powerplant-normalized manifest with the Gate 2 hash.
+  // The source-supplied manifest.json (if present) is left byte-for-byte unchanged.
+  const sidecar = { ...gate1Result.manifest, sha256: contentHash }
+  fs.writeFileSync(getStagingMetaPath(candidateId), JSON.stringify(sidecar, null, 2), 'utf-8')
 
   // Atomic publication: rename staging/<uuid>/ → candidates/<uuid>/.
-  // Both paths live under getSkillsDir(), so the rename is on the same filesystem.
-  // If the destination already exists (UUID collision), fail closed — do not overwrite.
+  // Both paths live under getSkillsDir(), so rename(2) is on the same filesystem.
+  // If the destination already exists (UUID collision), fail closed.
   const candidatePath = getCandidatePath(candidateId)
   fs.mkdirSync(getCandidatesDir(), { recursive: true })
   try {
@@ -597,7 +685,6 @@ export async function ingestSkillPackage(
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code
     if (code === 'ENOTEMPTY' || code === 'EEXIST') {
-      // Destination already exists — fail closed, clean up staging.
       try { fs.rmSync(stagingPath, { recursive: true, force: true }) } catch { /* best-effort */ }
       return {
         success: false,
@@ -614,7 +701,7 @@ export async function ingestSkillPackage(
     command: 'powerplant skill import',
     candidateId,
     name: gate1Result.manifest.name,
-    contentHash: null, // Gate 2 (hashing) not yet run
+    contentHash,
   })
 
   return {
@@ -622,6 +709,7 @@ export async function ingestSkillPackage(
     candidateId,
     candidatePath,
     name: gate1Result.manifest.name,
-    gatesCompleted: ['GATE_0', 'GATE_1'],
+    contentHash,
+    gatesCompleted: ['GATE_0', 'GATE_1', 'GATE_2', 'GATE_3'],
   }
 }

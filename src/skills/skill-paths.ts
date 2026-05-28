@@ -50,5 +50,11 @@ export function getCandidateMetaPath(candidateId: string): string {
   return path.join(getCandidatePath(candidateId), '.powerplant-meta.json')
 }
 
+// Powerplant-owned metadata file within the staging copy, written after all gates pass
+// and before the atomic rename to candidates/. Same filename as in the final path.
+export function getStagingMetaPath(candidateId: string): string {
+  return path.join(getStagingPath(candidateId), POWERPLANT_META_FILENAME)
+}
+
 // Reserved filename that must not appear in imported skill packages.
 export const POWERPLANT_META_FILENAME = '.powerplant-meta.json' as const
