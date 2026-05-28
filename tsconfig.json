@@ -13,9 +13,6 @@
   "include": ["src/**/*", "tests/**/*", "fixtures/**/*", "vitest.config.ts"],
   "exclude": [
     "node_modules",
-    "dist",
-    "src/skills/skill-lifecycle.ts",
-    "src/skills/skill-envelope.ts",
-    "tests/skill-lifecycle.test.ts"
+    "dist"
   ]
 }

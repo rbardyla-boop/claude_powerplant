@@ -118,16 +118,6 @@ export const SkillAuditEventSchema = z.discriminatedUnion('event', [
     reason: z.string(),
     contentHash: z.string().nullable(),
   }),
-
-  // Active skill version disabled by operator action.
-  // Defined here to support skill-lifecycle.ts (Phase 1B); not emitted by Phase 1A import flow.
-  baseEvent.extend({
-    event: z.literal('disabled'),
-    name: z.string(),
-    version: z.number().int().positive(),
-    candidateId: z.string().uuid(),
-    contentHash: z.string(),
-  }),
 ])
 
 export type SkillAuditEvent = z.infer<typeof SkillAuditEventSchema>

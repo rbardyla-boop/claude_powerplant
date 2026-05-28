@@ -4,7 +4,8 @@ import { randomUUID } from 'crypto'
 import {
   getCandidatesDir,
   getCandidatePath,
-  getCandidateMetaPath,
+  getStagingDir,
+  getStagingPath,
   getSkillQuarantineCandidatePath,
   POWERPLANT_META_FILENAME,
 } from './skill-paths.js'
@@ -27,25 +28,42 @@ export const DEFAULT_GATE0_LIMITS: Gate0Limits = {
   maxDepth: 5,
 }
 
-// ── Internal types ────────────────────────────────────────────────────────────
-
 // ── Gate 0 copy hooks (test injection only) ───────────────────────────────────
 
 /**
  * Hooks for deterministic adversarial testing. Never populated in production.
  *
- * beforeOpen  — called after lstat validation, before opening the source handle.
- *               Use to simulate path substitution at the open boundary.
- * afterChunk  — called after each chunk is written to the destination.
- *               bytesWrittenSoFar is the running total for this file.
- *               Use to simulate source growth during the copy window.
- * afterWrite  — called after all chunks are written, before post-copy fstat.
- *               Use to simulate source mutation after full write.
+ * beforeOpen       — called after lstat validation, before opening the source handle.
+ *                    Use to simulate path substitution at the open boundary.
+ * onReadRequest    — called before each read, with the bounded request length and
+ *                    the bytes already copied for this file.
+ *                    Use to assert that read requests never exceed validated budgets.
+ * afterChunk       — called after each chunk is written to the destination.
+ *                    bytesWrittenSoFar is the running total for this file.
+ *                    Use to simulate source growth during the copy window.
+ * afterWrite       — called after all chunks are written, before post-copy fstat.
+ *                    Use to simulate source mutation after full write.
  */
 export interface Gate0CopyHooks {
   beforeOpen?: (entry: ValidatedFileEntry) => void
+  onReadRequest?: (entry: ValidatedFileEntry, requestedLength: number, bytesCopiedSoFar: number) => void
   afterChunk?: (entry: ValidatedFileEntry, bytesWrittenSoFar: number) => void
   afterWrite?: (entry: ValidatedFileEntry) => void
+}
+
+// ── Test options threaded through ingestSkillPackage ──────────────────────────
+
+/**
+ * Test-only overrides for ingestSkillPackage. Never set in production callers.
+ *
+ * candidateId  — override randomUUID() so tests can predict the staging/candidate
+ *                paths and assert atomic publication invariants deterministically.
+ * copyHooks    — thread copy hooks through ingestion to observe staging state
+ *                during the copy window (e.g., assert candidates/ not yet visible).
+ */
+export interface IngestTestOptions {
+  candidateId?: string
+  copyHooks?: Gate0CopyHooks
 }
 
 // ── ValidatedFileEntry ────────────────────────────────────────────────────────
@@ -130,7 +148,6 @@ async function walkSourceDirectory(
       }
 
       // Path traversal: canonical path must remain inside source root.
-      // This guards against any future archive-extraction path escape.
       const canonical = path.resolve(entryPath)
       const rootWithSep = resolvedRoot.endsWith(path.sep) ? resolvedRoot : resolvedRoot + path.sep
       if (!canonical.startsWith(rootWithSep) && canonical !== resolvedRoot) {
@@ -156,7 +173,6 @@ async function walkSourceDirectory(
       }
 
       if (!stat.isFile()) {
-        // Device files, sockets, FIFOs, and any non-regular entry
         return { kind: 'GATE_0_REJECTION', reason: `Unsupported entry type: ${relPath}` }
       }
 
@@ -208,7 +224,7 @@ async function walkSourceDirectory(
   return { kind: 'GATE_0_ACCEPTANCE', files }
 }
 
-// ── Snapshot copy — handle-based with pre/post fstat ─────────────────────────
+// ── Snapshot copy — handle-based with bounded reads and pre/post fstat ────────
 //
 // Platform note: O_NOFOLLOW is available on Linux and macOS (fs.constants.O_NOFOLLOW).
 // It prevents open() from following the final path component if it is a symlink,
@@ -220,7 +236,7 @@ async function walkSourceDirectory(
 // during the walk-to-open window) is not portably preventable at the Node.js level
 // without OS-specific mechanisms. Phase 1A treats this as a residual risk: skill
 // imports should be performed by the operator, not by untrusted concurrent processes,
-// and the quarantine snapshot is in Powerplant-controlled storage (0o700).
+// and the staging snapshot is in Powerplant-controlled storage (0o700).
 //
 // Exported so tests can call it directly with crafted ValidatedFileEntry values and
 // injected hooks — no timing-dependent sleeps needed.
@@ -229,7 +245,7 @@ async function walkSourceDirectory(
 const NO_FOLLOW_OPEN_SUPPORTED =
   'O_NOFOLLOW' in fs.constants && (fs.constants.O_NOFOLLOW as number) !== 0
 
-// Chunk size for bounded copy. Small enough to check limits frequently;
+// Chunk size for bounded reads. Small enough to check limits frequently;
 // large enough for efficient I/O. 64 KB fits within the 512 KB per-file limit.
 const COPY_CHUNK_SIZE = 64 * 1024
 
@@ -241,6 +257,16 @@ async function copyFileSecure(
   readBuf: Buffer,              // shared buffer; reused across files for efficiency
   hooks?: Gate0CopyHooks
 ): Promise<{ success: false; reason: string } | { success: true; bytesCopied: number }> {
+  // Defense-in-depth: entry.sizeBytes must not exceed the per-file budget.
+  // The Gate 0 walk guarantees this for entries it produces; this guard defends
+  // against crafted entries passed directly to copyFileSecure.
+  if (entry.sizeBytes > limits.maxFileSizeBytes) {
+    return {
+      success: false,
+      reason: `Entry size exceeds per-file limit (${entry.sizeBytes} > ${limits.maxFileSizeBytes}): ${entry.relativePath}`,
+    }
+  }
+
   const destPath = path.join(destDir, entry.relativePath)
 
   // Test hook: simulate path substitution just before open.
@@ -315,31 +341,43 @@ async function copyFileSecure(
       throw err
     }
 
-    // Bounded chunk copy from opened source handle.
-    // Limits are enforced BEFORE writing each chunk so Powerplant never
-    // allocates or writes more than the Gate 0 budget permits.
+    // Bounded chunk copy from the opened source handle.
+    //
+    // Every read request is bounded to the minimum of:
+    //   • bytes remaining in the structurally validated source entry (remainingValidated)
+    //   • bytes remaining in the total-package budget (remainingPackageLimit)
+    //   • COPY_CHUNK_SIZE
+    //
+    // Powerplant never requests more bytes from the source than the validated budget
+    // allows — even when the source grows after initial lstat validation.
+    // Once entry.sizeBytes bytes have been requested, the loop exits without a
+    // further probe read. Post-copy fstat detects any growth or mutation.
     let bytesCopiedThisFile = 0
     let copyError: { success: false; reason: string } | null = null
     try {
       while (true) {
-        const { bytesRead: n } = await srcHandle.read(readBuf, 0, readBuf.length, null)
-        if (n === 0) break
+        // All validated bytes have been requested — exit without an additional probe read.
+        if (bytesCopiedThisFile >= entry.sizeBytes) break
 
-        bytesCopiedThisFile += n
+        const remainingValidated = entry.sizeBytes - bytesCopiedThisFile
+        const remainingPackageLimit = limits.maxTotalSizeBytes - (priorPackageBytes + bytesCopiedThisFile)
 
-        // Enforce all budgets before writing the chunk.
-        if (bytesCopiedThisFile > entry.sizeBytes) {
-          copyError = { success: false, reason: `Source file grew beyond validated size during copy: ${entry.relativePath}` }
-          break
-        }
-        if (bytesCopiedThisFile > limits.maxFileSizeBytes) {
-          copyError = { success: false, reason: `Source file exceeded max file size during copy: ${entry.relativePath}` }
-          break
-        }
-        if (priorPackageBytes + bytesCopiedThisFile > limits.maxTotalSizeBytes) {
+        // Package budget exhausted — reject before requesting any more source bytes.
+        if (remainingPackageLimit <= 0) {
           copyError = { success: false, reason: `Package exceeded max total size during copy: ${entry.relativePath}` }
           break
         }
+
+        // Bound the read to the minimum of all applicable limits.
+        const readLen = Math.min(COPY_CHUNK_SIZE, remainingValidated, remainingPackageLimit)
+
+        // Test hook: observe the bounded read request before it is issued.
+        hooks?.onReadRequest?.(entry, readLen, bytesCopiedThisFile)
+
+        const { bytesRead: n } = await srcHandle.read(readBuf, 0, readLen, null)
+        if (n === 0) break  // premature EOF — byte-count check below handles this
+
+        bytesCopiedThisFile += n
 
         await destHandle.write(readBuf, 0, n)
 
@@ -347,7 +385,8 @@ async function copyFileSecure(
         hooks?.afterChunk?.(entry, bytesCopiedThisFile)
       }
 
-      // Require exact byte count at the end of a successful loop.
+      // Require exact byte count after a successful loop.
+      // Short-read (shrunken source) is caught here; growth is caught by post-copy fstat.
       if (!copyError && bytesCopiedThisFile !== entry.sizeBytes) {
         copyError = {
           success: false,
@@ -373,7 +412,8 @@ async function copyFileSecure(
     hooks?.afterWrite?.(entry)
 
     // Post-copy fstat: source identity must be unchanged since we read it.
-    // Checks mtime and ctime (ctime best-effort on FAT/network FS).
+    // Detects growth (size mismatch), shrinkage (byte-count check fires first),
+    // and content mutation (mtime/ctime change). ctime is best-effort on FAT/network FS.
     const postStat = await srcHandle.stat()
     const identityChanged =
       postStat.size !== entry.sizeBytes ||
@@ -411,10 +451,20 @@ export async function copyToSnapshot(
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+//
+// Ingestion flow:
+//   1. Gate 0 walk   — validate filesystem structure; reject immediately on violation
+//   2. Bounded copy  — write package into skills/.staging/<uuid>/ (never candidates/)
+//   3. Gate 1        — validate schema and identity against the staging snapshot
+//   4. Publish       — atomic rename staging/<uuid>/ → candidates/<uuid>/
+//
+// candidates/<uuid>/ is only visible after step 4 succeeds.
+// A partially copied or Gate-1-rejected package appears only under staging/ or quarantine/.
 
 export async function ingestSkillPackage(
   sourcePath: string,
-  limits: Partial<Gate0Limits> = {}
+  limits: Partial<Gate0Limits> = {},
+  testOptions?: IngestTestOptions
 ): Promise<IngestionResult> {
   const effectiveLimits: Gate0Limits = { ...DEFAULT_GATE0_LIMITS, ...limits }
   const resolvedSource = path.resolve(sourcePath)
@@ -471,17 +521,25 @@ export async function ingestSkillPackage(
     return { success: false, failedGate: 'GATE_0', reason: walkResult.reason, candidateId: null }
   }
 
-  // Gate 0 passed — create the Powerplant-controlled quarantine snapshot.
-  // All later operations use this snapshot, never the source directory.
-  fs.mkdirSync(getCandidatesDir(), { recursive: true })
-  const candidateId = randomUUID()
-  const candidatePath = getCandidatePath(candidateId)
-  fs.mkdirSync(candidatePath, { recursive: true, mode: 0o700 })
+  // Gate 0 walk passed — copy into staging.
+  // The staging directory is Powerplant-controlled and is NOT visible under candidates/.
+  // candidates/<uuid>/ is created only by the atomic rename at the end of this function.
+  const candidateId = testOptions?.candidateId ?? randomUUID()
+  const stagingPath = getStagingPath(candidateId)
+  fs.mkdirSync(getStagingDir(), { recursive: true })
+  fs.mkdirSync(stagingPath, { recursive: true, mode: 0o700 })
 
-  const copyResult = await copyToSnapshot(walkResult.files, candidatePath, effectiveLimits)
+  const copyResult = await copyToSnapshot(
+    walkResult.files,
+    stagingPath,
+    effectiveLimits,
+    testOptions?.copyHooks
+  )
+
   if (!copyResult.success) {
-    // Snapshot creation failed — clean up and reject.
-    try { fs.rmSync(candidatePath, { recursive: true, force: true }) } catch { /* best-effort */ }
+    // Gate 0 copy failure: remove the entire staging directory.
+    // No candidate is published; candidateId is null in audit and result.
+    try { fs.rmSync(stagingPath, { recursive: true, force: true }) } catch { /* best-effort */ }
     appendAuditEvent({
       event: 'import-rejected',
       command: 'powerplant skill import',
@@ -493,16 +551,20 @@ export async function ingestSkillPackage(
     return { success: false, failedGate: 'GATE_0', reason: copyResult.reason, candidateId: null }
   }
 
-  // Gate 1: schema and identity validation — operates only on the snapshot.
-  const gate1Result = await validateCandidateSchema(candidatePath, candidateId)
+  // Gate 1: schema and identity validation — operates only on the staging snapshot.
+  const gate1Result = await validateCandidateSchema(stagingPath, candidateId)
 
   if (!gate1Result.success) {
-    // Move invalid candidate to skill quarantine using the authoritative path helper.
+    // Gate 1 failure: move the complete staging snapshot to quarantine.
+    // The snapshot is never exposed under candidates/.
     const quarantinePath = getSkillQuarantineCandidatePath(candidateId)
     try {
       fs.mkdirSync(path.dirname(quarantinePath), { recursive: true })
-      fs.renameSync(candidatePath, quarantinePath)
-    } catch { /* best-effort — snapshot remains in candidates/ if move fails */ }
+      fs.renameSync(stagingPath, quarantinePath)
+    } catch {
+      // If rename fails (e.g., cross-device), clean up staging instead.
+      try { fs.rmSync(stagingPath, { recursive: true, force: true }) } catch { /* best-effort */ }
+    }
 
     appendAuditEvent({
       event: 'import-rejected',
@@ -517,15 +579,35 @@ export async function ingestSkillPackage(
 
   // Both gates passed.
   //
-  // The imported snapshot in candidatePath is now source-detached and must not
-  // be modified. Powerplant-owned metadata (the normalized manifest) is written
-  // to .powerplant-meta.json — a separate Powerplant-controlled file that never
-  // overwrites any content that was part of the imported package.
+  // Write Powerplant-owned metadata into the staging snapshot. This file is always
+  // distinct from any user-supplied manifest.json and must never overwrite it.
   fs.writeFileSync(
-    getCandidateMetaPath(candidateId),
+    path.join(stagingPath, POWERPLANT_META_FILENAME),
     JSON.stringify(gate1Result.manifest, null, 2),
     'utf-8'
   )
+
+  // Atomic publication: rename staging/<uuid>/ → candidates/<uuid>/.
+  // Both paths live under getSkillsDir(), so the rename is on the same filesystem.
+  // If the destination already exists (UUID collision), fail closed — do not overwrite.
+  const candidatePath = getCandidatePath(candidateId)
+  fs.mkdirSync(getCandidatesDir(), { recursive: true })
+  try {
+    fs.renameSync(stagingPath, candidatePath)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'ENOTEMPTY' || code === 'EEXIST') {
+      // Destination already exists — fail closed, clean up staging.
+      try { fs.rmSync(stagingPath, { recursive: true, force: true }) } catch { /* best-effort */ }
+      return {
+        success: false,
+        failedGate: 'GATE_0',
+        reason: `Candidate destination already exists: ${candidateId}`,
+        candidateId: null,
+      }
+    }
+    throw err
+  }
 
   appendAuditEvent({
     event: 'imported',

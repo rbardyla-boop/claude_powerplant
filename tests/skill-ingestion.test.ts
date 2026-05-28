@@ -43,6 +43,10 @@ function getCandidatesDir(): string {
   return path.join(tmpPowerplantHome, 'skills', 'candidates')
 }
 
+function getStagingDir(): string {
+  return path.join(tmpPowerplantHome, 'skills', '.staging')
+}
+
 function getQuarantineDir(): string {
   return path.join(tmpPowerplantHome, 'skills', 'quarantine')
 }
@@ -301,6 +305,9 @@ describe('successful ingestion (Gates 0 and 1)', () => {
     // Powerplant-owned metadata is stored separately — snapshot content unchanged
     expect(fs.existsSync(path.join(success.candidatePath, '.powerplant-meta.json'))).toBe(true)
 
+    // Staging directory is gone — renamed atomically to candidates/
+    expect(fs.existsSync(path.join(getStagingDir(), success.candidateId))).toBe(false)
+
     // Audit log records 'imported' event
     const auditLog = readAuditLog()
     const event = JSON.parse(auditLog.trim().split('\n')[0] ?? '')
@@ -394,31 +401,33 @@ describe('successful ingestion (Gates 0 and 1)', () => {
 // ── Gate 1 failure ────────────────────────────────────────────────────────────
 
 describe('Gate 1 rejection', () => {
-  test('rejects a package with invalid skill name in manifest, candidateId is set', async () => {
+  test('rejects a package with invalid skill name in manifest; snapshot moved to quarantine only', async () => {
     const src = fixturePath('gate1-invalid-name')
-    const result = await ingestSkillPackage(src)
+    const knownId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+    const result = await ingestSkillPackage(src, {}, { candidateId: knownId })
 
     expect(result.success).toBe(false)
     if (!result.success) {
       expect(result.failedGate).toBe('GATE_1')
-      // Gate 0 passed, so a candidateId was assigned
-      expect(result.candidateId).not.toBeNull()
+      expect(result.candidateId).toBe(knownId)
       expect(result.reason).toMatch(/kebab-case|Skill name/i)
     }
 
-    // Candidate moved to quarantine (not in candidates/)
-    const candidatesDir = getCandidatesDir()
-    if (fs.existsSync(candidatesDir)) {
-      const children = fs.readdirSync(candidatesDir)
-      expect(children.length).toBe(0)
-    }
+    // candidates/ must never have been created for this candidateId
+    expect(fs.existsSync(path.join(getCandidatesDir(), knownId))).toBe(false)
 
-    // Audit event has Gate 1
+    // Snapshot is in quarantine
+    expect(fs.existsSync(path.join(getQuarantineDir(), knownId))).toBe(true)
+
+    // Staging cleaned up (moved to quarantine)
+    expect(fs.existsSync(path.join(getStagingDir(), knownId))).toBe(false)
+
+    // Audit event has Gate 1 and non-null candidateId
     const auditLog = readAuditLog()
     const event = JSON.parse(auditLog.trim().split('\n')[0] ?? '')
     expect(event.event).toBe('import-rejected')
     expect(event.failedGate).toBe('GATE_1')
-    expect(event.candidateId).not.toBeNull()
+    expect(event.candidateId).toBe(knownId)
   })
 
   test('rejects a package missing SKILL.md', async () => {
@@ -560,8 +569,6 @@ describe('copyToSnapshot: post-open inode identity check', () => {
       fs.writeFileSync(filePath, 'content')
       const stat = fs.lstatSync(filePath)
 
-      // Supply a wrong inode — simulates detecting that a different file was
-      // substituted at the same path after the walk recorded the original inode.
       const entries: ValidatedFileEntry[] = [{
         relativePath: 'file.txt',
         absolutePath: filePath,
@@ -675,26 +682,29 @@ describe('copyToSnapshot: exclusive destination creation', () => {
   })
 })
 
-// ── Bounded-copy adversarial tests ───────────────────────────────────────────
-// These tests prove that Gate 0 never reads/writes past its configured budgets,
-// even when the source grows after initial validation. The afterChunk hook injects
-// growth between chunk writes without any timing dependence.
+// ── Bounded-read adversarial tests ───────────────────────────────────────────
+// These tests prove that Gate 0 never issues read requests beyond the validated
+// budget — even when the source grows after initial lstat validation.
+// The onReadRequest hook observes each read request before it is issued,
+// providing a deterministic witness without timing dependence.
 
-describe('bounded copy: source grows beyond validated entry size during copy', () => {
-  test('rejects growth and leaves no accepted destination file', async () => {
-    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grow-size-src-'))
-    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grow-size-dest-'))
+describe('bounded read: source grows mid-copy — no bytes beyond entry.sizeBytes are requested', () => {
+  test('after first chunk, read loop exits without requesting extra bytes; fstat detects growth', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'read-grow-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'read-grow-dest-'))
     try {
       const filePath = path.join(srcDir, 'file.txt')
       fs.writeFileSync(filePath, 'x'.repeat(50))
       const entry = makeValidatedEntry(filePath)  // entry.sizeBytes = 50
 
+      const requestedLengths: number[] = []
       let hookFired = false
       const hooks: Gate0CopyHooks = {
+        onReadRequest: (_, requestedLength) => { requestedLengths.push(requestedLength) },
         afterChunk: () => {
           if (!hookFired) {
             hookFired = true
-            // Append after the first chunk is written — source now 200 bytes
+            // Source grows to 200 bytes after the first (and only) permitted chunk
             fs.appendFileSync(filePath, 'y'.repeat(150))
           }
         },
@@ -702,11 +712,18 @@ describe('bounded copy: source grows beyond validated entry size during copy', (
 
       const result = await copyToSnapshot([entry], destDir, DEFAULT_GATE0_LIMITS, hooks)
 
+      // Gate 0 rejects based on post-copy size mismatch (growth detected via fstat)
       expect(result.success).toBe(false)
-      if (!result.success) {
-        expect(result.reason).toMatch(/grew beyond validated size/i)
-      }
-      // Partial destination must be cleaned up
+      if (!result.success) expect(result.reason).toMatch(/changed during copying/i)
+
+      // Witness: total bytes requested ≤ entry.sizeBytes — no over-budget read was issued
+      const totalRequested = requestedLengths.reduce((a, b) => a + b, 0)
+      expect(totalRequested).toBeLessThanOrEqual(entry.sizeBytes)
+      // Exactly one read request was made (the 50-byte file fits in one chunk)
+      expect(requestedLengths).toHaveLength(1)
+      expect(requestedLengths[0]).toBe(50)
+
+      // No partial destination remains
       expect(fs.readdirSync(destDir)).toHaveLength(0)
     } finally {
       fs.rmSync(srcDir, { recursive: true, force: true })
@@ -715,46 +732,116 @@ describe('bounded copy: source grows beyond validated entry size during copy', (
   })
 })
 
-describe('bounded copy: source grows beyond maxFileSizeBytes during copy', () => {
-  test('rejects growth past the per-file budget ceiling', async () => {
-    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grow-maxfile-src-'))
-    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grow-maxfile-dest-'))
+describe('bounded read: file smaller than COPY_CHUNK_SIZE — read request bounded exactly', () => {
+  test('single read request equals exactly the validated file size', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'read-small-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'read-small-dest-'))
+    try {
+      const content = 'x'.repeat(100)  // 100 bytes — well below 64 KB COPY_CHUNK_SIZE
+      const filePath = path.join(srcDir, 'file.txt')
+      fs.writeFileSync(filePath, content)
+      const entry = makeValidatedEntry(filePath)
+
+      const requestedLengths: number[] = []
+      const hooks: Gate0CopyHooks = {
+        onReadRequest: (_, requestedLength) => { requestedLengths.push(requestedLength) },
+      }
+
+      const result = await copyToSnapshot([entry], destDir, DEFAULT_GATE0_LIMITS, hooks)
+      expect(result.success).toBe(true)
+
+      // Exactly one read issued, bounded to exactly the file size (not COPY_CHUNK_SIZE)
+      expect(requestedLengths).toHaveLength(1)
+      expect(requestedLengths[0]).toBe(100)
+
+      // All read requests are ≤ entry.sizeBytes
+      for (const len of requestedLengths) {
+        expect(len).toBeLessThanOrEqual(entry.sizeBytes)
+      }
+
+      // Content preserved exactly
+      expect(fs.readFileSync(path.join(destDir, 'file.txt'), 'utf-8')).toBe(content)
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true })
+      fs.rmSync(destDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('bounded read: package near total-byte limit — read bounded to remaining package budget', () => {
+  test('first read of second file is bounded to remaining package bytes, not to file size', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'read-budget-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'read-budget-dest-'))
+    try {
+      // Package budget = 100 bytes. file1 = 80 bytes, file2 = 40 bytes.
+      // After file1 is copied, remaining budget = 20 bytes.
+      // First read of file2 must be bounded to 20 bytes, not 40.
+      const customLimits = { ...DEFAULT_GATE0_LIMITS, maxTotalSizeBytes: 100 }
+      const f1 = path.join(srcDir, 'file1.txt')
+      const f2 = path.join(srcDir, 'file2.txt')
+      fs.writeFileSync(f1, 'x'.repeat(80))
+      fs.writeFileSync(f2, 'y'.repeat(40))
+
+      const entries = [makeValidatedEntry(f1), makeValidatedEntry(f2)]
+
+      const readRequests: Array<{ rel: string; len: number }> = []
+      const hooks: Gate0CopyHooks = {
+        onReadRequest: (e, requestedLength) => {
+          readRequests.push({ rel: e.relativePath, len: requestedLength })
+        },
+      }
+
+      const result = await copyToSnapshot(entries, destDir, customLimits, hooks)
+
+      // Package budget exceeded — ingestion rejects
+      expect(result.success).toBe(false)
+      if (!result.success) expect(result.reason).toMatch(/exceeded max total size/i)
+
+      // First read of file2 is bounded to remaining budget (100 - 80 = 20), not file size (40)
+      const file2Reads = readRequests.filter(r => r.rel === 'file2.txt')
+      expect(file2Reads.length).toBeGreaterThan(0)
+      expect(file2Reads[0]?.len).toBeLessThanOrEqual(20)
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true })
+      fs.rmSync(destDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('bounded read: defense-in-depth rejects crafted entry with sizeBytes > maxFileSizeBytes', () => {
+  test('copyFileSecure rejects before any read when entry.sizeBytes exceeds per-file limit', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'did-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'did-dest-'))
     try {
       const filePath = path.join(srcDir, 'file.txt')
-      // Use a custom limit with a very small maxFileSizeBytes for testability.
-      // sizeBytes in the crafted entry is larger than the actual file so the
-      // entry.sizeBytes check does not fire first — only maxFileSizeBytes fires.
-      const CUSTOM_MAX = 80
-      const customLimits = { ...DEFAULT_GATE0_LIMITS, maxFileSizeBytes: CUSTOM_MAX }
       fs.writeFileSync(filePath, 'x'.repeat(60))
       const actualStat = fs.lstatSync(filePath)
-      // Craft entry with sizeBytes = 10 MB so entry.sizeBytes guard won't fire
+
+      const CUSTOM_MAX = 50
+      const customLimits = { ...DEFAULT_GATE0_LIMITS, maxFileSizeBytes: CUSTOM_MAX }
+
+      // Craft entry with sizeBytes (60) exceeding maxFileSizeBytes (50)
       const entry: ValidatedFileEntry = {
         relativePath: 'file.txt',
         absolutePath: filePath,
-        sizeBytes: 10 * 1024 * 1024,
+        sizeBytes: 60,
         mtimeMs: actualStat.mtimeMs,
         ino: actualStat.ino,
         dev: actualStat.dev,
       }
 
-      let hookFired = false
+      let readRequestMade = false
       const hooks: Gate0CopyHooks = {
-        afterChunk: () => {
-          if (!hookFired) {
-            hookFired = true
-            // Grow source past CUSTOM_MAX
-            fs.appendFileSync(filePath, 'z'.repeat(60))  // now 120 bytes > 80
-          }
-        },
+        onReadRequest: () => { readRequestMade = true },
       }
 
       const result = await copyToSnapshot([entry], destDir, customLimits, hooks)
 
       expect(result.success).toBe(false)
-      if (!result.success) {
-        expect(result.reason).toMatch(/exceeded max file size/i)
-      }
+      if (!result.success) expect(result.reason).toMatch(/per-file limit/i)
+
+      // Defense-in-depth fires before any read is issued
+      expect(readRequestMade).toBe(false)
       expect(fs.readdirSync(destDir)).toHaveLength(0)
     } finally {
       fs.rmSync(srcDir, { recursive: true, force: true })
@@ -763,12 +850,13 @@ describe('bounded copy: source grows beyond maxFileSizeBytes during copy', () =>
   })
 })
 
-describe('bounded copy: cumulative package bytes exceed maxTotalSizeBytes', () => {
-  test('rejects second file when cumulative bytes exceed total budget', async () => {
-    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grow-total-src-'))
-    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grow-total-dest-'))
+describe('bounded copy: partial destination cleanup on chunk-loop failure', () => {
+  test('removes partial destination when package budget is exhausted mid-file', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cleanup-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cleanup-dest-'))
     try {
-      // Two files of 40 bytes each; total budget = 60 bytes
+      // Two files of 40 bytes each; total budget = 60 bytes.
+      // Copying file2 exhausts the budget mid-file; partial dest must be cleaned up.
       const customLimits = { ...DEFAULT_GATE0_LIMITS, maxTotalSizeBytes: 60 }
       const f1 = path.join(srcDir, 'file1.txt')
       const f2 = path.join(srcDir, 'file2.txt')
@@ -782,42 +870,9 @@ describe('bounded copy: cumulative package bytes exceed maxTotalSizeBytes', () =
       if (!result.success) {
         expect(result.reason).toMatch(/exceeded max total size/i)
       }
-      // Only file1 may have been written; file2 must not exist or be cleaned up
+      // Partial file2 must be cleaned up — only file1 may remain
       const destFiles = fs.readdirSync(destDir)
       expect(destFiles).not.toContain('file2.txt')
-    } finally {
-      fs.rmSync(srcDir, { recursive: true, force: true })
-      fs.rmSync(destDir, { recursive: true, force: true })
-    }
-  })
-})
-
-describe('bounded copy: partial destination cleanup on chunk-loop failure', () => {
-  test('removes partial destination when growth triggers rejection mid-copy', async () => {
-    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cleanup-src-'))
-    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cleanup-dest-'))
-    try {
-      const filePath = path.join(srcDir, 'file.txt')
-      fs.writeFileSync(filePath, 'a'.repeat(50))
-      const entry = makeValidatedEntry(filePath)
-
-      // After the first chunk is written to dest, grow source to trigger rejection
-      let hookFired = false
-      const hooks: Gate0CopyHooks = {
-        afterChunk: () => {
-          if (!hookFired) {
-            hookFired = true
-            fs.appendFileSync(filePath, 'b'.repeat(200))
-          }
-        },
-      }
-
-      const result = await copyToSnapshot([entry], destDir, DEFAULT_GATE0_LIMITS, hooks)
-
-      expect(result.success).toBe(false)
-      expect(hookFired).toBe(true)  // hook fired — at least one chunk was written before failure
-      // The partial destination must be deleted, not left behind
-      expect(fs.readdirSync(destDir)).toHaveLength(0)
     } finally {
       fs.rmSync(srcDir, { recursive: true, force: true })
       fs.rmSync(destDir, { recursive: true, force: true })
@@ -846,5 +901,186 @@ describe('bounded copy: successful copy is byte-exact', () => {
       fs.rmSync(srcDir, { recursive: true, force: true })
       fs.rmSync(destDir, { recursive: true, force: true })
     }
+  })
+})
+
+// ── Atomic publication tests ──────────────────────────────────────────────────
+// These tests prove that candidates/<uuid>/ is only observable AFTER both gates
+// pass and the atomic rename succeeds. A partially copied or Gate-1-rejected
+// package must never appear under candidates/.
+
+describe('atomic publication: candidates/ absent during copy', () => {
+  test('candidates/ does not exist while copy is still in progress', async () => {
+    const src = makeTmpSourceDir('staging-copy-obs')
+    writeFile(src, 'SKILL.md', '# Test\n')
+    writeFile(src, 'manifest.json', JSON.stringify({
+      schemaVersion: 1, id: '00000000-0000-0000-0000-000000000010', name: 'test-skill',
+      version: 1, description: 'Test', tags: [], createdAt: '2026-01-01T00:00:00.000Z',
+      promotedAt: null, sourceRunId: null, sha256: null, evaluationPassed: false, evaluationAt: null,
+    }))
+    const knownId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+
+    let candidatesDirExistedDuringCopy = false
+    const result = await ingestSkillPackage(src, {}, {
+      candidateId: knownId,
+      copyHooks: {
+        afterChunk: () => {
+          // While copy is in progress, candidates/ must not contain this package
+          if (fs.existsSync(path.join(getCandidatesDir(), knownId))) {
+            candidatesDirExistedDuringCopy = true
+          }
+        },
+      },
+    })
+
+    expect(result.success).toBe(true)
+    // candidates/ was not visible during the copy window
+    expect(candidatesDirExistedDuringCopy).toBe(false)
+    // It is now visible after successful publication
+    expect(fs.existsSync(path.join(getCandidatesDir(), knownId))).toBe(true)
+  })
+})
+
+describe('atomic publication: Gate 1 failure — snapshot goes to quarantine, never candidates/', () => {
+  test('candidates/ not created when Gate 1 fails; quarantine has the snapshot', async () => {
+    const src = fixturePath('gate1-invalid-name')
+    const knownId = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+
+    let candidatesDirExistedDuringCopy = false
+    const result = await ingestSkillPackage(src, {}, {
+      candidateId: knownId,
+      copyHooks: {
+        afterChunk: () => {
+          if (fs.existsSync(path.join(getCandidatesDir(), knownId))) {
+            candidatesDirExistedDuringCopy = true
+          }
+        },
+      },
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) expect(result.failedGate).toBe('GATE_1')
+
+    // candidates/ was never created during copy
+    expect(candidatesDirExistedDuringCopy).toBe(false)
+    // candidates/<uuid> does not exist
+    expect(fs.existsSync(path.join(getCandidatesDir(), knownId))).toBe(false)
+    // Staging cleaned up (moved to quarantine)
+    expect(fs.existsSync(path.join(getStagingDir(), knownId))).toBe(false)
+    // Quarantine has the snapshot
+    expect(fs.existsSync(path.join(getQuarantineDir(), knownId))).toBe(true)
+  })
+})
+
+describe('atomic publication: Gate 0 copy failure — staging removed, no candidate', () => {
+  test('staging cleaned up and candidates/ absent when fstat detects source mutation', async () => {
+    const src = makeTmpSourceDir('staging-gate0-copy-fail')
+    writeFile(src, 'SKILL.md', '# Test\n')
+    writeFile(src, 'manifest.json', JSON.stringify({
+      schemaVersion: 1, id: '00000000-0000-0000-0000-000000000011', name: 'test-skill',
+      version: 1, description: 'Test', tags: [], createdAt: '2026-01-01T00:00:00.000Z',
+      promotedAt: null, sourceRunId: null, sha256: null, evaluationPassed: false, evaluationAt: null,
+    }))
+    const skillMdPath = path.join(src, 'SKILL.md')
+    const knownId = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
+
+    let hookFired = false
+    const result = await ingestSkillPackage(src, {}, {
+      candidateId: knownId,
+      copyHooks: {
+        afterWrite: (entry) => {
+          // Mutate source after writing SKILL.md — triggers fstat mismatch → Gate 0 failure
+          if (!hookFired && entry.relativePath === 'SKILL.md') {
+            hookFired = true
+            fs.appendFileSync(skillMdPath, '\n# TAMPERED\n')
+          }
+        },
+      },
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.failedGate).toBe('GATE_0')
+      expect(result.candidateId).toBeNull()
+    }
+
+    // Staging directory for this candidateId must be removed
+    expect(fs.existsSync(path.join(getStagingDir(), knownId))).toBe(false)
+    // No candidate published
+    expect(fs.existsSync(path.join(getCandidatesDir(), knownId))).toBe(false)
+    expect(fs.existsSync(getCandidatesDir())).toBe(false)
+  })
+})
+
+describe('atomic publication: successful import — complete candidate, staging gone', () => {
+  test('candidates/ contains complete package with Powerplant meta sidecar after atomic rename', async () => {
+    const src = makeTmpSourceDir('staging-success')
+    writeFile(src, 'SKILL.md', '# Test skill\n')
+    writeFile(src, 'manifest.json', JSON.stringify({
+      schemaVersion: 1, id: '00000000-0000-0000-0000-000000000012', name: 'test-skill',
+      version: 1, description: 'Test', tags: [], createdAt: '2026-01-01T00:00:00.000Z',
+      promotedAt: null, sourceRunId: null, sha256: null, evaluationPassed: false, evaluationAt: null,
+    }))
+    const knownId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+
+    const result = await ingestSkillPackage(src, {}, { candidateId: knownId })
+
+    expect(result.success).toBe(true)
+    const success = result as IngestionSuccess
+
+    // Staging is gone (renamed to candidates/)
+    expect(fs.existsSync(path.join(getStagingDir(), knownId))).toBe(false)
+
+    // Candidate has the original payload and Powerplant metadata sidecar
+    const candidatePath = path.join(getCandidatesDir(), knownId)
+    expect(fs.existsSync(path.join(candidatePath, 'SKILL.md'))).toBe(true)
+    expect(fs.existsSync(path.join(candidatePath, 'manifest.json'))).toBe(true)
+    expect(fs.existsSync(path.join(candidatePath, '.powerplant-meta.json'))).toBe(true)
+
+    // Payload is unmodified — snapshot content equals source content
+    expect(fs.readFileSync(path.join(candidatePath, 'SKILL.md'), 'utf-8')).toBe('# Test skill\n')
+
+    // Powerplant metadata is the normalized manifest, not the source manifest
+    const meta = JSON.parse(
+      fs.readFileSync(path.join(candidatePath, '.powerplant-meta.json'), 'utf-8')
+    )
+    expect(meta.id).toBe(knownId)
+    expect(meta.name).toBe('test-skill')
+    expect(meta.sha256).toBeNull()
+
+    // candidatePath matches the returned path
+    expect(success.candidatePath).toBe(candidatePath)
+  })
+})
+
+describe('atomic publication: destination collision fails closed', () => {
+  test('fails closed without overwriting when candidates/<uuid>/ already exists', async () => {
+    const src = makeTmpSourceDir('staging-collision')
+    writeFile(src, 'SKILL.md', '# Test\n')
+    writeFile(src, 'manifest.json', JSON.stringify({
+      schemaVersion: 1, id: '00000000-0000-0000-0000-000000000013', name: 'test-skill',
+      version: 1, description: 'Test', tags: [], createdAt: '2026-01-01T00:00:00.000Z',
+      promotedAt: null, sourceRunId: null, sha256: null, evaluationPassed: false, evaluationAt: null,
+    }))
+    const knownId = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+
+    // Pre-create the destination with existing content to simulate a UUID collision
+    const existingCandidatePath = path.join(getCandidatesDir(), knownId)
+    fs.mkdirSync(existingCandidatePath, { recursive: true })
+    fs.writeFileSync(path.join(existingCandidatePath, 'existing.txt'), 'pre-existing content')
+
+    const result = await ingestSkillPackage(src, {}, { candidateId: knownId })
+
+    // Import fails closed — pre-existing content is not overwritten
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.candidateId).toBeNull()
+      expect(result.reason).toMatch(/already exists/i)
+    }
+
+    // Pre-existing content is untouched
+    expect(
+      fs.readFileSync(path.join(existingCandidatePath, 'existing.txt'), 'utf-8')
+    ).toBe('pre-existing content')
   })
 })
