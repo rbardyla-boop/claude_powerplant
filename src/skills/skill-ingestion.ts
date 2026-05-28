@@ -1,7 +1,13 @@
 import fs from 'fs'
 import path from 'path'
 import { randomUUID } from 'crypto'
-import { getCandidatesDir, getCandidatePath } from './skill-paths.js'
+import {
+  getCandidatesDir,
+  getCandidatePath,
+  getCandidateMetaPath,
+  getSkillQuarantineCandidatePath,
+  POWERPLANT_META_FILENAME,
+} from './skill-paths.js'
 import { appendAuditEvent } from './skill-audit.js'
 import { validateCandidateSchema } from './candidate-store.js'
 
@@ -23,7 +29,8 @@ export const DEFAULT_GATE0_LIMITS: Gate0Limits = {
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
-interface ValidatedFileEntry {
+// Exported for deterministic TOCTOU testing only — not part of the public skill API.
+export interface ValidatedFileEntry {
   relativePath: string
   absolutePath: string
   sizeBytes: number
@@ -89,6 +96,15 @@ async function walkSourceDirectory(
     for (const entry of entries) {
       const entryPath = path.join(dir, entry.name)
       const relPath = path.relative(resolvedRoot, entryPath)
+
+      // Reserved filename: reject packages that contain Powerplant-owned metadata.
+      // A crafted skill supplying .powerplant-meta.json could attempt to spoof identity.
+      if (entry.name === POWERPLANT_META_FILENAME) {
+        return {
+          kind: 'GATE_0_REJECTION',
+          reason: `${POWERPLANT_META_FILENAME} is reserved for Powerplant and must not appear in skill packages`,
+        }
+      }
 
       // Path traversal: canonical path must remain inside source root.
       // This guards against any future archive-extraction path escape.
@@ -168,8 +184,10 @@ async function walkSourceDirectory(
 }
 
 // ── Snapshot copy ─────────────────────────────────────────────────────────────
+// Exported so deterministic TOCTOU tests can pass a crafted ValidatedFileEntry
+// with a mismatched mtimeMs without requiring filesystem timing tricks.
 
-async function copyToSnapshot(
+export async function copyToSnapshot(
   files: ValidatedFileEntry[],
   destDir: string
 ): Promise<{ success: false; reason: string } | { success: true }> {
@@ -291,11 +309,8 @@ export async function ingestSkillPackage(
   const gate1Result = await validateCandidateSchema(candidatePath, candidateId)
 
   if (!gate1Result.success) {
-    // Move invalid candidate to skill quarantine.
-    const quarantinePath = path.join(
-      getCandidatesDir().replace(/candidates$/, 'quarantine'),
-      candidateId
-    )
+    // Move invalid candidate to skill quarantine using the authoritative path helper.
+    const quarantinePath = getSkillQuarantineCandidatePath(candidateId)
     try {
       fs.mkdirSync(path.dirname(quarantinePath), { recursive: true })
       fs.renameSync(candidatePath, quarantinePath)
@@ -312,9 +327,14 @@ export async function ingestSkillPackage(
     return { success: false, failedGate: 'GATE_1', reason: gate1Result.reason, candidateId }
   }
 
-  // Both gates passed — write normalized manifest and record success.
+  // Both gates passed.
+  //
+  // The imported snapshot in candidatePath is now source-detached and must not
+  // be modified. Powerplant-owned metadata (the normalized manifest) is written
+  // to .powerplant-meta.json — a separate Powerplant-controlled file that never
+  // overwrites any content that was part of the imported package.
   fs.writeFileSync(
-    path.join(candidatePath, 'manifest.json'),
+    getCandidateMetaPath(candidateId),
     JSON.stringify(gate1Result.manifest, null, 2),
     'utf-8'
   )

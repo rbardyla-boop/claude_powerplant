@@ -32,3 +32,12 @@ export function getCandidatePath(candidateId: string): string {
 export function getSkillQuarantineCandidatePath(candidateId: string): string {
   return path.join(getSkillQuarantineDir(), candidateId)
 }
+
+// Powerplant-owned metadata file within a candidate directory.
+// This is always distinct from any user-supplied manifest.json in the snapshot.
+export function getCandidateMetaPath(candidateId: string): string {
+  return path.join(getCandidatePath(candidateId), '.powerplant-meta.json')
+}
+
+// Reserved filename that must not appear in imported skill packages.
+export const POWERPLANT_META_FILENAME = '.powerplant-meta.json' as const

@@ -2,7 +2,13 @@ import { describe, test, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { ingestSkillPackage, DEFAULT_GATE0_LIMITS, type IngestionSuccess } from '../src/skills/skill-ingestion.js'
+import {
+  ingestSkillPackage,
+  copyToSnapshot,
+  DEFAULT_GATE0_LIMITS,
+  type IngestionSuccess,
+  type ValidatedFileEntry,
+} from '../src/skills/skill-ingestion.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -280,17 +286,19 @@ describe('successful ingestion (Gates 0 and 1)', () => {
     const result = await ingestSkillPackage(src)
 
     expect(result.success).toBe(true)
-    // Cast after the assertion — vitest cannot narrow the union via expect()
     const success = result as IngestionSuccess
 
     expect(success.name).toBe('minimal-skill')
     expect(success.gatesCompleted).toEqual(['GATE_0', 'GATE_1'])
     expect(success.candidateId).toMatch(/^[0-9a-f-]{36}$/)
 
-    // Snapshot exists in candidates/
+    // Snapshot exists in candidates/ with the original content intact
     expect(fs.existsSync(success.candidatePath)).toBe(true)
     expect(fs.existsSync(path.join(success.candidatePath, 'SKILL.md'))).toBe(true)
     expect(fs.existsSync(path.join(success.candidatePath, 'manifest.json'))).toBe(true)
+
+    // Powerplant-owned metadata is stored separately — snapshot content unchanged
+    expect(fs.existsSync(path.join(success.candidatePath, '.powerplant-meta.json'))).toBe(true)
 
     // Audit log records 'imported' event
     const auditLog = readAuditLog()
@@ -301,21 +309,60 @@ describe('successful ingestion (Gates 0 and 1)', () => {
     expect(event.contentHash).toBeNull() // Gate 2 not yet run
   })
 
-  test('skill-no-manifest fixture generates a skeleton manifest from frontmatter', async () => {
-    const src = fixturePath('skill-no-manifest')
-    const result = await ingestSkillPackage(src)
+  test('valid-minimal: source manifest.json is preserved unchanged in snapshot', async () => {
+    const src = fixturePath('valid-minimal')
+    const srcManifest = JSON.parse(fs.readFileSync(path.join(src, 'manifest.json'), 'utf-8'))
 
+    const result = await ingestSkillPackage(src)
+    expect(result.success).toBe(true)
+    const success = result as IngestionSuccess
+
+    // snapshot manifest.json must be byte-for-byte identical to the source
+    const snapshotManifest = JSON.parse(
+      fs.readFileSync(path.join(success.candidatePath, 'manifest.json'), 'utf-8')
+    )
+    expect(snapshotManifest).toEqual(srcManifest)
+
+    // Powerplant metadata has the normalized id (candidateId parameter)
+    const meta = JSON.parse(
+      fs.readFileSync(path.join(success.candidatePath, '.powerplant-meta.json'), 'utf-8')
+    )
+    expect(meta.id).toBe(success.candidateId)
+    expect(meta.name).toBe('minimal-skill')
+    expect(meta.sha256).toBeNull()
+  })
+
+  test('skill-no-manifest: snapshot file tree is unchanged; skeleton in .powerplant-meta.json', async () => {
+    const src = fixturePath('skill-no-manifest')
+    const srcFiles = fs.readdirSync(src).sort()
+
+    const result = await ingestSkillPackage(src)
     expect(result.success).toBe(true)
     const success = result as IngestionSuccess
 
     expect(success.name).toBe('no-manifest-skill')
 
-    const manifestRaw = JSON.parse(
-      fs.readFileSync(path.join(success.candidatePath, 'manifest.json'), 'utf-8')
+    // Source had only SKILL.md
+    expect(srcFiles).toEqual(['SKILL.md'])
+
+    // Snapshot has SKILL.md + Powerplant metadata — no injected manifest.json
+    const snapshotFiles = fs.readdirSync(success.candidatePath).sort()
+    expect(snapshotFiles).toContain('SKILL.md')
+    expect(snapshotFiles).toContain('.powerplant-meta.json')
+    expect(snapshotFiles).not.toContain('manifest.json')
+
+    // SKILL.md content is preserved exactly
+    const srcContent = fs.readFileSync(path.join(src, 'SKILL.md'), 'utf-8')
+    const snapContent = fs.readFileSync(path.join(success.candidatePath, 'SKILL.md'), 'utf-8')
+    expect(snapContent).toBe(srcContent)
+
+    // Powerplant metadata is the skeleton derived from frontmatter
+    const meta = JSON.parse(
+      fs.readFileSync(path.join(success.candidatePath, '.powerplant-meta.json'), 'utf-8')
     )
-    expect(manifestRaw.name).toBe('no-manifest-skill')
-    expect(manifestRaw.sha256).toBeNull()
-    expect(manifestRaw.evaluationPassed).toBe(false)
+    expect(meta.name).toBe('no-manifest-skill')
+    expect(meta.sha256).toBeNull()
+    expect(meta.evaluationPassed).toBe(false)
   })
 
   test('snapshot immutability: mutating source after import does not change snapshot', async () => {
@@ -412,6 +459,90 @@ describe('Gate 1 rejection', () => {
     if (!result.success) {
       expect(result.failedGate).toBe('GATE_1')
       expect(result.reason).toMatch(/sha256/i)
+    }
+  })
+})
+
+// ── Gate 0: reserved filename protection ──────────────────────────────────────
+
+describe('Gate 0: reserved .powerplant-meta.json filename', () => {
+  test('rejects a package containing .powerplant-meta.json (spoof-prevention)', async () => {
+    const src = makeTmpSourceDir('reserved-filename-test')
+    writeFile(src, 'SKILL.md', '# Test\n')
+    writeFile(src, '.powerplant-meta.json', JSON.stringify({ spoofed: true }))
+
+    const result = await ingestSkillPackage(src)
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.failedGate).toBe('GATE_0')
+      expect(result.candidateId).toBeNull()
+      expect(result.reason).toMatch(/\.powerplant-meta\.json.*reserved/i)
+    }
+
+    expect(fs.existsSync(getCandidatesDir())).toBe(false)
+  })
+})
+
+// ── Copy-time TOCTOU protection — deterministic test ─────────────────────────
+// Tests copyToSnapshot directly with a crafted ValidatedFileEntry whose
+// recorded mtimeMs differs from the actual file — no filesystem timing needed.
+
+describe('copyToSnapshot: deterministic TOCTOU mtime protection', () => {
+  test('rejects a file whose recorded mtimeMs does not match the real file mtime', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toctou-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toctou-dest-'))
+    try {
+      const filePath = path.join(srcDir, 'file.txt')
+      fs.writeFileSync(filePath, 'content')
+      const actualStat = fs.lstatSync(filePath)
+
+      // Craft an entry whose recorded mtime is in the future — simulates the
+      // race condition where a file is modified between walk and copy.
+      const entries: ValidatedFileEntry[] = [{
+        relativePath: 'file.txt',
+        absolutePath: filePath,
+        sizeBytes: actualStat.size,
+        mtimeMs: actualStat.mtimeMs + 9999,
+      }]
+
+      const result = await copyToSnapshot(entries, destDir)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.reason).toMatch(/modified during ingestion/i)
+      }
+      // No file was copied to the destination
+      expect(fs.readdirSync(destDir)).toHaveLength(0)
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true })
+      fs.rmSync(destDir, { recursive: true, force: true })
+    }
+  })
+
+  test('accepts a file whose mtimeMs matches exactly', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toctou-ok-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toctou-ok-dest-'))
+    try {
+      const filePath = path.join(srcDir, 'file.txt')
+      fs.writeFileSync(filePath, 'content')
+      const actualStat = fs.lstatSync(filePath)
+
+      const entries: ValidatedFileEntry[] = [{
+        relativePath: 'file.txt',
+        absolutePath: filePath,
+        sizeBytes: actualStat.size,
+        mtimeMs: actualStat.mtimeMs,
+      }]
+
+      const result = await copyToSnapshot(entries, destDir)
+
+      expect(result.success).toBe(true)
+      expect(fs.existsSync(path.join(destDir, 'file.txt'))).toBe(true)
+      expect(fs.readFileSync(path.join(destDir, 'file.txt'), 'utf-8')).toBe('content')
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true })
+      fs.rmSync(destDir, { recursive: true, force: true })
     }
   })
 })
