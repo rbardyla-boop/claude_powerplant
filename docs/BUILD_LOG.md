@@ -898,3 +898,24 @@ would have created a false safety boundary. Work stopped immediately.
 
 **Next step:** Create Singularity Inc. `.powerplant/` contract (narrow QA-only scope),
 run `powerplant inspect` against it, confirm no pilot paths appear in the disclosure.
+
+---
+
+## Pass 3 Repair — Actionable Check Diagnostics + Run Classification
+
+**Triggered by:** pp-run-1779995284783 iterated blindly 7 times on a failing Vitest
+check. Root cause: `handleRunCheck` filtered stdout for TAP lines; Vitest default
+reporter emits a different format. Agent received only `verdict=FAIL_CHECK exit=1`.
+
+**Files changed:**
+- `src/diagnostics/extract-check-diagnostics.ts` — pure Vitest+TSC output parser
+- `src/contracts/project-tool-contracts.ts` — RunCheckDiagnosticsSchema + RunClassification
+- `src/broker/project-tool-broker.ts` — diagnostics in project_run_check; budget cap
+  changed from throw to clean break; RUN_CLASSIFICATION.json written on every exit
+- `tests/check-diagnostics.test.ts` — 34 regression tests, 11 goals
+
+**Historical run classifications:**
+- pp-run-1779994543584 → FAILED_INCOMPLETE_AGENT_RUN (reads only, no finalize)
+- pp-run-1779995284783 → FAILED_TOOL_BUDGET_EXHAUSTED (30-call cap, repeatedCheckFailures)
+
+**Result:** typecheck PASS, 675 tests passing (0 failures).

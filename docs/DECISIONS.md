@@ -560,3 +560,26 @@ TypeScript type definitions via `@types/js-yaml`, and is actively maintained.
 
 **Consequences.** Single added runtime dependency. The loader validates the parsed
 document with explicit TypeScript guards rather than relying on js-yaml's type system.
+
+---
+
+## ADR-0023: Bounded actionable check diagnostics via extractCheckDiagnostics
+
+**Status:** accepted (Pass 3 repair)
+
+**Context.** QA Pass 3 (pp-run-1779995284783) showed the agent iterating 7 times on
+a failing test without seeing why it failed. The broker's `project_run_check` returned
+`verdict=FAIL_CHECK exit=1` — useless because the TAP filter found nothing in Vitest
+output format.
+
+**Decision.** Add `src/diagnostics/extract-check-diagnostics.ts`, a pure (no-I/O)
+parser extracting bounded actionable diagnostics from check stdout/stderr. The same
+function is used by both the live broker handler and `powerplant verify`.
+
+**Rejected alternative.** Expanding `allowedReadPaths` to include
+`node_modules/.vite/vitest/results.json`. Rejected: violates the agent boundary,
+requires per-project allowlist edits, and is unnecessary because the approved check
+output already contains all required diagnostic information.
+
+**Safety constraints:** Absolute host paths stripped; node_modules lines filtered;
+max 3 failing test entries and 5 TS errors; all fields capped at 300 characters.

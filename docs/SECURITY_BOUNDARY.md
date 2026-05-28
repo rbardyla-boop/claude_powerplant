@@ -237,3 +237,16 @@ after the session completes and compares against the pre-session `SOURCE_MANIFES
   misconfigured.
 - The contract schemas in `src/contracts/` and `src/platform/` as the
   ground truth for what Sprint 1+ may emit.
+
+---
+
+## Diagnostic extraction boundary
+
+`extractCheckDiagnostics` operates only on the `stdoutTail`/`stderrTail` strings
+already captured by the approved check executor — no I/O of its own.
+
+**Must never return:** absolute host paths (stripped); node_modules file contents
+(filtered); `.vite/` cache internals; secrets or env vars.
+
+**Invariant:** The agent does not need `node_modules/.vite/**` in `allowedReadPaths`
+to receive useful diagnostics. Expanding that path for diagnostic purposes is forbidden.

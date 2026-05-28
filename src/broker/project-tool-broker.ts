@@ -15,6 +15,8 @@ import type {
   WriteFileResult,
   RunCheckResult,
   FinalizeResult,
+  RunClassification,
+  RunCheckDiagnostics,
 } from '../contracts/project-tool-contracts.js'
 import type { CheckResult } from '../contracts/verification-preflight-report.js'
 import type { LoadedProjectContract } from '../projects/load-project-contract.js'
@@ -22,6 +24,7 @@ import { runCapsuleProjectChecks } from './project-executor-actions.js'
 import { generatePatchPackage } from '../projects/generate-patch-package.js'
 import { verifySourceUnchanged } from '../projects/verify-source-unchanged.js'
 import type { PilotSnapshot } from '../projects/build-pilot-snapshot.js'
+import { extractCheckDiagnostics, formatDiagnosticSummary } from '../diagnostics/extract-check-diagnostics.js'
 import {
   SPRINT4A_TOOL_LIST_FILES,
   SPRINT4A_TOOL_READ_FILE,
@@ -43,6 +46,7 @@ export interface ProjectBrokerSessionResult {
   checkResults: CheckResult[] | null
   patchPackage: import('../projects/generate-patch-package.js').PatchPackage | null
   passed: boolean
+  classification: RunClassification
 }
 
 interface BrokerState {
@@ -70,6 +74,14 @@ interface BrokerState {
   // Persists computed results across turns — needed because the API processes
   // batched results one at a time and re-emits requires_action for remaining IDs.
   computedResults: Map<string, string>
+  // Action counters for run classification
+  readCount: number
+  writeCount: number
+  checkCount: number
+  finalizeAttempted: boolean
+  budgetExhausted: boolean
+  lastFailedDiagnostic: RunCheckDiagnostics | null
+  checkFailStreaks: Record<string, number>
 }
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
@@ -105,6 +117,7 @@ function handleReadFile(state: BrokerState, input: unknown): string {
     )
   }
 
+  state.readCount++
   const absPath = path.join(state.snapshot.workspacePath, relPath)
   if (!fs.existsSync(absPath)) {
     return JSON.stringify({ error: `File not found: ${relPath}` })
@@ -140,6 +153,7 @@ function handleWriteFile(state: BrokerState, input: unknown): string {
   // Any write invalidates the check gate — the agent must re-run checks.
   state.checksValidAfterLastWrite = false
   state.lastWriteAt = Date.now()
+  state.writeCount++
 
   const result: WriteFileResult = { path: relPath, written: true }
   return JSON.stringify(result)
@@ -169,6 +183,7 @@ async function handleRunCheck(state: BrokerState, input: unknown): Promise<strin
   const checkResult = capsuleResult.checks[0]!
   state.lastCheckResult = checkResult
   state.checkResults.push(checkResult)
+  state.checkCount++
 
   const passed = checkResult.verdict === 'PASS'
   state.testCheckPassed = passed
@@ -176,25 +191,41 @@ async function handleRunCheck(state: BrokerState, input: unknown): Promise<strin
   if (passed) {
     state.checksValidAfterLastWrite = true
     state.lastCheckPassedAt = Date.now()
+    state.checkFailStreaks[check] = 0
+  } else {
+    state.checkFailStreaks[check] = (state.checkFailStreaks[check] ?? 0) + 1
   }
 
-  const summaryLines = checkResult.stdoutTail
-    .split('\n')
-    .filter(l => l.startsWith('# ') || l.startsWith('ok ') || l.startsWith('not ok '))
-    .slice(0, 20)
-    .join('\n')
+  // Infer check kind for diagnostic extraction.
+  const command = checkEntry.command
+  const kind: 'test' | 'typecheck' =
+    check === 'typecheck' || /\btsc\b/.test(command) ? 'typecheck' : 'test'
+
+  const diagnostics = extractCheckDiagnostics(
+    kind, checkResult.verdict, checkResult.exitCode,
+    checkResult.stdoutTail, checkResult.stderrTail,
+  )
+
+  if (!passed) state.lastFailedDiagnostic = diagnostics
+
+  const summary = passed
+    ? `PASS (exit 0) — ${checkResult.stdoutTail.split('\n').find(l => /# tests/.test(l)) ?? 'tests passed'}`
+    : formatDiagnosticSummary(diagnostics)
 
   const result: RunCheckResult = {
     checkId: check,
     passed,
     exitCode: checkResult.exitCode ?? -1,
-    summary: summaryLines || `verdict=${checkResult.verdict} exit=${checkResult.exitCode}`,
+    summary,
+    diagnostics: passed ? undefined : diagnostics,
   }
   return JSON.stringify(result)
 }
 
 async function handleFinalize(state: BrokerState, input: unknown): Promise<string> {
   const { summary } = validateToolInput(SPRINT4A_TOOL_FINALIZE, input) as { summary: string }
+
+  state.finalizeAttempted = true
 
   if (!state.testCheckPassed) {
     throw new Error(
@@ -291,6 +322,13 @@ export async function runProjectPilotBrokerSession(opts: {
     lastWriteAt: null,
     lastCheckPassedAt: null,
     computedResults: new Map(),
+    readCount: 0,
+    writeCount: 0,
+    checkCount: 0,
+    finalizeAttempted: false,
+    budgetExhausted: false,
+    lastFailedDiagnostic: null,
+    checkFailStreaks: {},
   }
 
   const session = await client.beta.sessions.create({
@@ -315,7 +353,13 @@ export async function runProjectPilotBrokerSession(opts: {
 
   while (true) {
     if (state.totalCustomToolCalls >= SPRINT4A_MAX_TOOL_CALLS) {
-      throw new Error(`Broker safety: exceeded ${SPRINT4A_MAX_TOOL_CALLS} custom tool calls`)
+      // Budget exhausted — classify and break cleanly.
+      // The run is ineligible; classification is written to the artifact dir below.
+      state.budgetExhausted = true
+      console.warn(
+        `[broker] safety: ${SPRINT4A_MAX_TOOL_CALLS} custom tool calls reached — stopping session`,
+      )
+      break
     }
 
     let requiresAction = false
@@ -412,6 +456,43 @@ export async function runProjectPilotBrokerSession(opts: {
     state.builtinToolUseCount === 0 &&
     state.finalResponse.trim().includes(SPRINT4A_FINAL_RESPONSE)
 
+  // ── Run classification ────────────────────────────────────────────────────
+  const anyCheckStreak = Object.values(state.checkFailStreaks).some(n => n >= 3)
+
+  type RunTerminationReason = import('../contracts/project-tool-contracts.js').RunTerminationReason
+  let terminationReason: RunTerminationReason
+  if (state.budgetExhausted) {
+    terminationReason = 'FAILED_TOOL_BUDGET_EXHAUSTED'
+  } else if (!state.finalizeReceived) {
+    terminationReason = 'FAILED_INCOMPLETE_AGENT_RUN'
+  } else {
+    terminationReason = 'COMPLETED'
+  }
+
+  const patchEligibleForApplication = passed && terminationReason === 'COMPLETED'
+
+  const classification: RunClassification = {
+    terminationReason,
+    patchEligibleForApplication,
+    readCount: state.readCount,
+    writeCount: state.writeCount,
+    checkCount: state.checkCount,
+    finalizeAttempted: state.finalizeAttempted,
+    artifactsComplete: state.patchPackage !== null,
+    repeatedCheckFailures: anyCheckStreak,
+    ...(state.lastFailedDiagnostic !== null && !passed
+      ? { lastFailedDiagnostic: state.lastFailedDiagnostic }
+      : {}),
+  }
+
+  // Persist classification so incomplete/budget-exhausted runs leave an honest record.
+  try {
+    const classificationPath = path.join(state.patchDir, 'RUN_CLASSIFICATION.json')
+    fs.writeFileSync(classificationPath, JSON.stringify(classification, null, 2), 'utf-8')
+  } catch {
+    // Best-effort — never block the return on filesystem write failure.
+  }
+
   return {
     sessionId,
     builtinToolUseCount: state.builtinToolUseCount,
@@ -420,5 +501,6 @@ export async function runProjectPilotBrokerSession(opts: {
     checkResults: state.checkResults.length > 0 ? state.checkResults : null,
     patchPackage: state.patchPackage,
     passed,
+    classification,
   }
 }
