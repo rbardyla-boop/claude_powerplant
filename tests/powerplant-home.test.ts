@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { getPowerplantHome, getStatePath, loadPowerplantEnv, POWERPLANT_HOME_ENV } from '../src/config/powerplant-home.js'
+import { getPowerplantHome, getStatePath, loadPowerplantEnv, getResolvedCredentialSource, POWERPLANT_HOME_ENV } from '../src/config/powerplant-home.js'
 import { loadState, saveState } from '../src/platform/managed-agent-state.js'
 import { loadSprint4aState, saveSprint4aState } from '../src/platform/sprint4a-state.js'
 
@@ -514,6 +514,153 @@ describe('credential safety: loadPowerplantEnv never reads project .env', () => 
         delete process.env[POWERPLANT_HOME_ENV]
       }
       delete process.env['ANTHROPIC_API_KEY']
+    }
+  })
+})
+
+// ── Test 13: package-root credential precedence ───────────────────────────────
+
+describe('loadPowerplantEnv: package-root credential precedence', () => {
+  // Save/restore all env vars touched in this suite
+  let savedHome: string | undefined
+  let savedKey: string | undefined
+  let savedModelId: string | undefined
+  let savedCwd: string
+
+  beforeEach(() => {
+    savedHome = process.env[POWERPLANT_HOME_ENV]
+    savedKey = process.env['ANTHROPIC_API_KEY']
+    savedModelId = process.env['CLAUDE_POWERPLANT_MODEL_ID']
+    savedCwd = process.cwd()
+    delete process.env['ANTHROPIC_API_KEY']
+    delete process.env['CLAUDE_POWERPLANT_MODEL_ID']
+  })
+
+  afterEach(() => {
+    process.chdir(savedCwd)
+    if (savedHome !== undefined) {
+      process.env[POWERPLANT_HOME_ENV] = savedHome
+    } else {
+      delete process.env[POWERPLANT_HOME_ENV]
+    }
+    if (savedKey !== undefined) {
+      process.env['ANTHROPIC_API_KEY'] = savedKey
+    } else {
+      delete process.env['ANTHROPIC_API_KEY']
+    }
+    if (savedModelId !== undefined) {
+      process.env['CLAUDE_POWERPLANT_MODEL_ID'] = savedModelId
+    } else {
+      delete process.env['CLAUDE_POWERPLANT_MODEL_ID']
+    }
+  })
+
+  it('loads ANTHROPIC_API_KEY from packageRootPath/.env when shell has no key', () => {
+    const pkgRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-pkg-root-'))
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-home-'))
+    process.env[POWERPLANT_HOME_ENV] = tmpHome
+    try {
+      fs.writeFileSync(path.join(pkgRoot, '.env'), 'ANTHROPIC_API_KEY=from-pkg-root\n')
+      const source = loadPowerplantEnv(pkgRoot)
+      expect(process.env['ANTHROPIC_API_KEY']).toBe('from-pkg-root')
+      expect(source).toBe('package-root')
+    } finally {
+      fs.rmSync(pkgRoot, { recursive: true, force: true })
+      fs.rmSync(tmpHome, { recursive: true, force: true })
+    }
+  })
+
+  it('getResolvedCredentialSource returns package-root after package-root load', () => {
+    const pkgRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-src-pkg-'))
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-src-home-'))
+    process.env[POWERPLANT_HOME_ENV] = tmpHome
+    try {
+      fs.writeFileSync(path.join(pkgRoot, '.env'), 'ANTHROPIC_API_KEY=pkg-key\n')
+      loadPowerplantEnv(pkgRoot)
+      expect(getResolvedCredentialSource()).toBe('package-root')
+    } finally {
+      fs.rmSync(pkgRoot, { recursive: true, force: true })
+      fs.rmSync(tmpHome, { recursive: true, force: true })
+    }
+  })
+
+  it('shell env takes precedence over package-root .env', () => {
+    process.env['ANTHROPIC_API_KEY'] = 'from-shell'
+    const pkgRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-shell-prec-'))
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-shell-home-'))
+    process.env[POWERPLANT_HOME_ENV] = tmpHome
+    try {
+      fs.writeFileSync(path.join(pkgRoot, '.env'), 'ANTHROPIC_API_KEY=should-not-override\n')
+      const source = loadPowerplantEnv(pkgRoot)
+      expect(process.env['ANTHROPIC_API_KEY']).toBe('from-shell')
+      expect(source).toBe('shell')
+    } finally {
+      fs.rmSync(pkgRoot, { recursive: true, force: true })
+      fs.rmSync(tmpHome, { recursive: true, force: true })
+    }
+  })
+
+  it('getResolvedCredentialSource returns shell when key was already set', () => {
+    process.env['ANTHROPIC_API_KEY'] = 'shell-key'
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-shell-src-'))
+    process.env[POWERPLANT_HOME_ENV] = tmpHome
+    try {
+      loadPowerplantEnv()
+      expect(getResolvedCredentialSource()).toBe('shell')
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to POWERPLANT_HOME/.env when packageRootPath has no .env', () => {
+    const pkgRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-fallback-pkg-'))
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-fallback-home-'))
+    process.env[POWERPLANT_HOME_ENV] = tmpHome
+    try {
+      // pkgRoot has no .env; home has the key
+      fs.writeFileSync(path.join(tmpHome, '.env'), 'ANTHROPIC_API_KEY=from-home\n')
+      const source = loadPowerplantEnv(pkgRoot)
+      expect(process.env['ANTHROPIC_API_KEY']).toBe('from-home')
+      expect(source).toBe('powerplant-home')
+    } finally {
+      fs.rmSync(pkgRoot, { recursive: true, force: true })
+      fs.rmSync(tmpHome, { recursive: true, force: true })
+    }
+  })
+
+  it('running from a target-project cwd loads package-root .env, not cwd .env', () => {
+    const pkgRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-pkg-cwd-'))
+    const targetProject = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-target-cwd-'))
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-cwd-home-'))
+    process.env[POWERPLANT_HOME_ENV] = tmpHome
+    try {
+      fs.writeFileSync(path.join(pkgRoot, '.env'), 'ANTHROPIC_API_KEY=from-pkg-root\n')
+      // Target project has a conflicting .env — must never be loaded
+      fs.writeFileSync(path.join(targetProject, '.env'), 'ANTHROPIC_API_KEY=from-target-project\n')
+      process.chdir(targetProject)
+      const source = loadPowerplantEnv(pkgRoot)
+      expect(process.env['ANTHROPIC_API_KEY']).toBe('from-pkg-root')
+      expect(source).toBe('package-root')
+    } finally {
+      fs.rmSync(pkgRoot, { recursive: true, force: true })
+      fs.rmSync(targetProject, { recursive: true, force: true })
+      fs.rmSync(tmpHome, { recursive: true, force: true })
+    }
+  })
+
+  it('supplementary keys loaded from home even when API key comes from package-root', () => {
+    const pkgRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-supp-pkg-'))
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-supp-home-'))
+    process.env[POWERPLANT_HOME_ENV] = tmpHome
+    try {
+      fs.writeFileSync(path.join(pkgRoot, '.env'), 'ANTHROPIC_API_KEY=pkg-key\n')
+      fs.writeFileSync(path.join(tmpHome, '.env'), 'CLAUDE_POWERPLANT_MODEL_ID=haiku-from-home\n')
+      loadPowerplantEnv(pkgRoot)
+      expect(process.env['ANTHROPIC_API_KEY']).toBe('pkg-key')
+      expect(process.env['CLAUDE_POWERPLANT_MODEL_ID']).toBe('haiku-from-home')
+    } finally {
+      fs.rmSync(pkgRoot, { recursive: true, force: true })
+      fs.rmSync(tmpHome, { recursive: true, force: true })
     }
   })
 })

@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { execFileSync } from 'child_process'
-import { getPowerplantHome } from '../../config/powerplant-home.js'
+import { getPowerplantHome, getResolvedCredentialSource } from '../../config/powerplant-home.js'
 import { loadState } from '../../platform/managed-agent-state.js'
 import { loadSprint4aState } from '../../platform/sprint4a-state.js'
 import { loadOperatorState, isStatePlausible, isStateValidated } from '../../platform/operator-state.js'
@@ -23,13 +23,7 @@ function isDockerImagePresent(imageName: string): boolean {
 }
 
 function detectCredentialSource(): DoctorReportOptions['credentialSource'] {
-  if (!process.env['ANTHROPIC_API_KEY']) return 'none'
-  // If POWERPLANT_HOME/.env was loaded it sets the key before this runs.
-  // We can only distinguish "was it set by the shell" from "was it already present":
-  // loadPowerplantEnv() is a no-op when the key is already set, so if we see it
-  // present we report 'env' (shell) unless the key matches a pattern we can't
-  // distinguish — in practice just report 'env' as the safe default.
-  return 'env'
+  return getResolvedCredentialSource()
 }
 
 export async function cmdDoctor(projectPath: string | null): Promise<void> {

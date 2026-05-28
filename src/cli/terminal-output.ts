@@ -8,7 +8,7 @@ export interface DoctorReportOptions {
   modelIdPresent: boolean
   runtimeReady: boolean
   validationStatus: 'validated' | 'unvalidated' | 'not_configured'
-  credentialSource: 'env' | 'powerplant_env' | 'none'
+  credentialSource: 'shell' | 'package-root' | 'powerplant-home' | 'none'
   statePurpose: string | null
   projectPath: string | null
   contractPresent: boolean
@@ -32,7 +32,13 @@ export function printDoctorReport(opts: DoctorReportOptions): void {
   console.log()
   console.log('Environment:')
   console.log(`  ANTHROPIC_API_KEY configured:         ${yn(opts.apiKeyPresent)}`)
-  console.log(`  Credential source:                    ${opts.credentialSource}`)
+  const credSourceLabel: Record<DoctorReportOptions['credentialSource'], string> = {
+    shell: 'shell (explicit export)',
+    'package-root': 'powerplant-package-root/.env',
+    'powerplant-home': '~/.powerplant/.env',
+    none: 'NOT FOUND',
+  }
+  console.log(`  Credential source:                    ${credSourceLabel[opts.credentialSource]}`)
   console.log(`  CLAUDE_POWERPLANT_MODEL_ID configured: ${yn(opts.modelIdPresent)}`)
   console.log(`  Target-project .env loaded:           ${yn(opts.targetProjectEnvLoaded)}`)
 

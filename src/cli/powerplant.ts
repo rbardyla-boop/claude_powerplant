@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { fileURLToPath } from 'url'
+import path from 'path'
 import { cmdInspect } from './commands/inspect.js'
 import { cmdRun } from './commands/run.js'
 import { cmdReview } from './commands/review.js'
@@ -7,10 +9,15 @@ import { cmdDoctor } from './commands/doctor.js'
 import { cmdSetup } from './commands/setup.js'
 import { loadPowerplantEnv } from '../config/powerplant-home.js'
 
-// Load credentials from ~/.powerplant/.env if ANTHROPIC_API_KEY is not already set.
-// This is the ONLY .env file Powerplant reads automatically.
-// It never reads a target project's .env regardless of the working directory.
-loadPowerplantEnv()
+// Resolve the Powerplant package root from this file's location so that
+// credentials are loaded from <pkg-root>/.env regardless of cwd.
+// src/cli/powerplant.ts → src/cli → src → pkg-root
+const __filename = fileURLToPath(import.meta.url)
+const pkgRoot = path.join(path.dirname(__filename), '..', '..')
+
+// Credential precedence: shell → pkg-root/.env → ~/.powerplant/.env
+// The target-project directory is never read.
+loadPowerplantEnv(pkgRoot)
 
 function printUsage(): void {
   console.log('Usage:')

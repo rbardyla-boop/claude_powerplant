@@ -34,7 +34,7 @@ function resolveEnvironmentId(): string {
 function readSystemPrompt(): string {
   // Resolve relative to this source file so it works from any cwd.
   const __filename = fileURLToPath(import.meta.url)
-  const pkgRoot = path.resolve(path.dirname(__filename), '..', '..', '..')
+  const pkgRoot = path.resolve(path.dirname(__filename), '..', '..')
   return fs.readFileSync(
     path.join(pkgRoot, 'power', 'agent', 'SANITIZED_PROJECT_PILOT_SYSTEM.md'),
     'utf-8',
