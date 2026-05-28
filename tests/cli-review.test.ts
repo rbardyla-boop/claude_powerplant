@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { findRunDirectory, makeRunArtifactDirectory, POWERPLANT_RUNS_HOME } from '../src/runs/find-run.js'
+import { parseVerificationReport } from '../src/cli/parse-verification-report.js'
 
 // Unit tests for the review command's artifact validation and run discovery.
 // No live API calls or network access.
@@ -194,5 +195,186 @@ describe('review exit behavior', () => {
     } finally {
       fs.rmSync(incompleteDir, { recursive: true, force: true })
     }
+  })
+})
+
+// ── parseVerificationReport ───────────────────────────────────────────────────
+
+const SELF_CORRECTED_REPORT = `# Verification Report
+
+### Check: \`test\`
+Command: \`npm test\`
+Exit code: 1
+Result: **FAIL_CHECK**
+\`\`\`
+Tests  0 passed, 1 failed
+\`\`\`
+
+### Check: \`test\`
+Command: \`npm test\`
+Exit code: 0
+Result: **PASS**
+\`\`\`
+Tests  37 passed
+\`\`\`
+
+### Check: \`typecheck\`
+Command: \`npm run typecheck\`
+Exit code: 0
+Result: **PASS**
+\`\`\`
+\`\`\`
+`
+
+const CLEAN_PASS_REPORT = `# Verification Report
+
+### Check: \`test\`
+Command: \`npm test\`
+Exit code: 0
+Result: **PASS**
+\`\`\`
+Tests  50 passed
+\`\`\`
+
+### Check: \`typecheck\`
+Command: \`npm run typecheck\`
+Exit code: 0
+Result: **PASS**
+\`\`\`
+\`\`\`
+`
+
+const FAILED_FINAL_REPORT = `# Verification Report
+
+### Check: \`test\`
+Command: \`npm test\`
+Exit code: 1
+Result: **FAIL_CHECK**
+\`\`\`
+Tests  3 failed
+\`\`\`
+`
+
+const INTEGRITY_FAILURE_REPORT = `# Verification Report
+
+### Check: \`test\`
+Command: \`npm test\`
+Exit code: 0
+Result: **FAIL_VERIFICATION_INTEGRITY**
+\`\`\`
+# tests 0
+\`\`\`
+`
+
+const LEGACY_REPORT = `# Verification Report
+
+Check ID: \`test\`
+Fixed action: \`node --test\`
+Exit code: 0
+Result: **PASSED**
+
+See \`executor-output/TEST_OUTPUT.txt\` for raw test output.
+`
+
+describe('parseVerificationReport — self-corrected run', () => {
+  it('reports finalVerdict PASS when last check of each type passed', () => {
+    const r = parseVerificationReport(SELF_CORRECTED_REPORT)
+    expect(r.finalVerdict).toBe('PASS')
+  })
+
+  it('identifies 3 total attempts', () => {
+    const r = parseVerificationReport(SELF_CORRECTED_REPORT)
+    expect(r.attempts).toHaveLength(3)
+  })
+
+  it('marks first test attempt (index 0) as intermediate', () => {
+    const r = parseVerificationReport(SELF_CORRECTED_REPORT)
+    expect(r.intermediateIndices.has(0)).toBe(true)
+  })
+
+  it('does not mark second test attempt (index 1) as intermediate', () => {
+    const r = parseVerificationReport(SELF_CORRECTED_REPORT)
+    expect(r.intermediateIndices.has(1)).toBe(false)
+  })
+
+  it('does not mark typecheck attempt (index 2) as intermediate', () => {
+    const r = parseVerificationReport(SELF_CORRECTED_REPORT)
+    expect(r.intermediateIndices.has(2)).toBe(false)
+  })
+
+  it('records FAIL_CHECK verdict for the first attempt', () => {
+    const r = parseVerificationReport(SELF_CORRECTED_REPORT)
+    expect(r.attempts[0]?.verdict).toBe('FAIL_CHECK')
+    expect(r.attempts[0]?.isPass).toBe(false)
+  })
+
+  it('has no integrity failure', () => {
+    const r = parseVerificationReport(SELF_CORRECTED_REPORT)
+    expect(r.hasIntegrityFailure).toBe(false)
+  })
+})
+
+describe('parseVerificationReport — clean first-pass run', () => {
+  it('reports finalVerdict PASS', () => {
+    const r = parseVerificationReport(CLEAN_PASS_REPORT)
+    expect(r.finalVerdict).toBe('PASS')
+  })
+
+  it('has no intermediate attempts', () => {
+    const r = parseVerificationReport(CLEAN_PASS_REPORT)
+    expect(r.intermediateIndices.size).toBe(0)
+  })
+
+  it('identifies 2 attempts', () => {
+    const r = parseVerificationReport(CLEAN_PASS_REPORT)
+    expect(r.attempts).toHaveLength(2)
+  })
+})
+
+describe('parseVerificationReport — failed final check', () => {
+  it('reports finalVerdict FAIL', () => {
+    const r = parseVerificationReport(FAILED_FINAL_REPORT)
+    expect(r.finalVerdict).toBe('FAIL')
+  })
+
+  it('records the FAIL_CHECK verdict', () => {
+    const r = parseVerificationReport(FAILED_FINAL_REPORT)
+    expect(r.attempts[0]?.verdict).toBe('FAIL_CHECK')
+  })
+})
+
+describe('parseVerificationReport — zero-test integrity failure', () => {
+  it('reports finalVerdict FAIL', () => {
+    const r = parseVerificationReport(INTEGRITY_FAILURE_REPORT)
+    expect(r.finalVerdict).toBe('FAIL')
+  })
+
+  it('sets hasIntegrityFailure', () => {
+    const r = parseVerificationReport(INTEGRITY_FAILURE_REPORT)
+    expect(r.hasIntegrityFailure).toBe(true)
+  })
+})
+
+describe('parseVerificationReport — legacy artifact format', () => {
+  it('reports format as legacy', () => {
+    const r = parseVerificationReport(LEGACY_REPORT)
+    expect(r.format).toBe('legacy')
+  })
+
+  it('reports finalVerdict UNKNOWN — never invents PASS from legacy format', () => {
+    const r = parseVerificationReport(LEGACY_REPORT)
+    expect(r.finalVerdict).toBe('UNKNOWN')
+  })
+
+  it('returns empty attempts array', () => {
+    const r = parseVerificationReport(LEGACY_REPORT)
+    expect(r.attempts).toHaveLength(0)
+  })
+})
+
+describe('parseVerificationReport — unknown artifact format', () => {
+  it('returns UNKNOWN verdict for empty/unrecognized content', () => {
+    expect(parseVerificationReport('').finalVerdict).toBe('UNKNOWN')
+    expect(parseVerificationReport('# Some other report').finalVerdict).toBe('UNKNOWN')
   })
 })

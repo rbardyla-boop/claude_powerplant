@@ -2,8 +2,8 @@
 
 **Verdict**: `A — SKILL_LIFECYCLE_STAGE_1_TRUST_FOUNDATION_COMMITTED_AND_BASELINED`
 **Date**: 2026-05-28
-**Branch**: `feat/skill-lifecycle`
-**Commit**: see §9 — recorded after clean-tree verification
+**Branch**: `feat/skill-lifecycle-isolated`
+**Commit**: `04dcd6c` feat(skill-lifecycle): Stage 1 — trust foundation committed and baselined
 
 ---
 
@@ -269,11 +269,12 @@ A — SKILL_LIFECYCLE_STAGE_1_TRUST_FOUNDATION_COMMITTED_AND_BASELINED
 
 | Item | Value |
 |------|-------|
-| Stage 1 commit hash | see below |
+| Stage 1 commit hash | `04dcd6c` |
 | Files committed | `src/skills/skill-lifecycle.ts`, `src/skills/skill-envelope.ts`, `tests/skill-lifecycle.test.ts`, `docs/architecture/SKILL_LIFECYCLE_STAGE_1_CLOSURE_RECORD.md`, `docs/architecture/SKILL_LIFECYCLE_MVP_PLAN.md` |
-| Tests before commit | 730 (702 committed + 28 untracked) |
-| Tests after commit | 730 (all committed) |
-| Clean-tree after commit | ✓ |
+| Tests before commit (npm test) | 730 (702 committed + 28 untracked) — 3 × 730/730/730 verified |
+| Tests in Stage 1 commit | 730 (all Stage 1 files committed) |
+| Post-commit npm test | 748 — includes 18 uncommitted CLI tests from unrelated in-progress work (`tests/cli-review.test.ts` M, `src/cli/terminal-output.ts` M, `src/cli/parse-verification-report.ts` untracked); these are not part of Stage 1 |
+| Stage 1 files — clean-tree | ✓ All 5 Stage 1 files committed; no Stage 1 files remain uncommitted |
 | Live invocation | Not implemented |
 | Verification-authority files | Not modified |
 | Capsule/finalize files | Not modified |
