@@ -1,0 +1,17 @@
+FROM node:20-alpine
+
+# Non-root executor user (same uid/gid as sprint3v for consistency)
+RUN addgroup -g 1001 executor \
+ && adduser -D -u 1001 -G executor executor
+
+# Mount points — host binds fresh directories at runtime
+RUN mkdir -p /mnt/session/workspace /mnt/session/outputs \
+ && chown executor:executor /mnt/session/outputs
+
+# Fixed test runner — never executes model-supplied commands
+COPY run-pilot-test.sh /usr/local/bin/run-pilot-test.sh
+RUN chmod 555 /usr/local/bin/run-pilot-test.sh
+
+USER executor
+
+ENTRYPOINT ["/usr/local/bin/run-pilot-test.sh"]

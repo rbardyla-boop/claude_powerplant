@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+*.tsbuildinfo
+fixtures/sample-project/node_modules/
+fixtures/sample-project/dist/
+.powerplant/state/*.json
+.powerplant/reports/*.json
+.powerplant/runtime/
+.powerplant/workspaces/

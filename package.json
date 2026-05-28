@@ -1,0 +1,57 @@
+{
+  "name": "claude-powerplant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "powerplant": "bin/powerplant.js"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "smoke:cloud": "node --env-file=.env --import=tsx src/cli/sprint1a-cloud-smoke.ts",
+    "smoke:output": "node --env-file=.env --import=tsx src/cli/sprint1b-cloud-output.ts",
+    "test:live": "NODE_OPTIONS=--env-file=.env RUN_LIVE_MANAGED_AGENTS_TEST=1 vitest run tests/sprint1a-cloud-smoke.live.test.ts",
+    "test:live:output": "NODE_OPTIONS=--env-file=.env RUN_LIVE_MANAGED_AGENTS_TEST=1 vitest run tests/sprint1b-cloud-output.live.test.ts",
+    "sprint2a:provision": "node --env-file=.env --import=tsx src/cli/sprint2a-provision.ts",
+    "sprint2a:worker": "node --env-file=.env --import=tsx src/cli/sprint2a-worker.ts",
+    "sprint2a:session": "node --env-file=.env --import=tsx src/cli/sprint2a-session.ts",
+    "test:live:sprint2a": "NODE_OPTIONS=--env-file=.env RUN_LIVE_SPRINT2A_TEST=1 vitest run tests/sprint2a-self-hosted.live.test.ts",
+    "sprint2b:build": "docker build --network=host -t powerplant-sandbox:sprint2b -f sandbox/Dockerfile sandbox",
+    "sprint2b:worker": "node --env-file=.env --import=tsx src/cli/sprint2b-worker.ts",
+    "sprint2b:session": "node --env-file=.env --import=tsx src/cli/sprint2b-session.ts",
+    "test:live:sprint2b": "NODE_OPTIONS=--env-file=.env RUN_LIVE_SPRINT2B_TEST=1 vitest run tests/sprint2b-container.live.test.ts",
+    "sprint3:provision": "node --env-file=.env --import=tsx src/cli/sprint3-provision.ts",
+    "sprint3:worker": "node --env-file=.env --import=tsx src/cli/sprint3-worker.ts",
+    "sprint3:session": "node --env-file=.env --import=tsx src/cli/sprint3-session.ts",
+    "test:live:sprint3": "NODE_OPTIONS=--env-file=.env RUN_LIVE_SPRINT3_TEST=1 vitest run tests/sprint3-project.live.test.ts",
+    "sprint3r:run": "node --env-file=.env --import=tsx src/cli/sprint3r-workspace-boundary.ts",
+    "test:live:sprint3r": "NODE_OPTIONS=--env-file=.env RUN_LIVE_SPRINT3R_TEST=1 vitest run tests/sprint3r-workspace-boundary.live.test.ts",
+    "sprint3s:run": "node --env-file=.env --import=tsx src/cli/sprint3s-worker-contract.ts",
+    "test:live:sprint3s": "NODE_OPTIONS=--env-file=.env RUN_LIVE_SPRINT3S_TEST=1 vitest run tests/sprint3s-worker-contract.live.test.ts",
+    "sprint3t:run": "node --env-file=.env --import=tsx src/cli/sprint3t-sdk-worker-selection.ts",
+    "test:live:sprint3t": "NODE_OPTIONS=--env-file=.env RUN_LIVE_SPRINT3T_TEST=1 vitest run tests/sprint3t-sdk-worker-selection.live.test.ts",
+    "sprint3u:run": "node --env-file=.env --import=tsx src/cli/sprint3u-security-boundary.ts",
+    "test:live:sprint3u": "NODE_OPTIONS=--env-file=.env RUN_LIVE_SPRINT3U_TEST=1 vitest run tests/sprint3u-security-boundary.live.test.ts",
+    "sprint3v:build": "docker build --network=host -t powerplant-executor:sprint3v -f power/executor/Dockerfile power/executor",
+    "proof:executor:local": "node --env-file=.env --import=tsx src/cli/sprint3v-local-proof.ts",
+    "smoke:executor:custom-tool": "node --env-file=.env --import=tsx src/cli/sprint3v-isolated-executor.ts",
+    "test:live:sprint3v": "NODE_OPTIONS=--env-file=.env RUN_LIVE_SPRINT3V_TEST=1 vitest run tests/sprint3v-isolated-executor.live.test.ts",
+    "sprint4a:build": "docker build --network=host -t powerplant-executor:sprint4a -f power/executor/Dockerfile.pilot power/executor",
+    "pilot:create": "node --import=tsx src/cli/create-external-pilot.ts",
+    "proof:pilot:snapshot": "node --import=tsx src/cli/proof-pilot-snapshot.ts",
+    "smoke:pilot:project": "node --env-file=.env --import=tsx src/cli/sprint4a-sanitized-project-pilot.ts",
+    "test:live:sprint4a": "NODE_OPTIONS=--env-file=.env RUN_LIVE_SPRINT4A_TEST=1 vitest run tests/sprint4a-sanitized-project-pilot.live.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.98.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.22.3",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
