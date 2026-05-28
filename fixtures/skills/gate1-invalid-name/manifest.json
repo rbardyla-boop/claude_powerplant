@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "00000000-0000-0000-0000-000000000002",
+  "name": "Invalid Name With Spaces",
+  "version": 1,
+  "description": "This skill has an invalid name.",
+  "tags": [],
+  "createdAt": "2026-05-28T00:00:00.000Z",
+  "promotedAt": null,
+  "sourceRunId": null,
+  "sha256": null,
+  "evaluationPassed": false,
+  "evaluationAt": null
+}
