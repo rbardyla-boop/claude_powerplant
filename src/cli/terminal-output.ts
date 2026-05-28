@@ -175,8 +175,9 @@ export function printReviewReport(opts: {
   verificationMd: string
   adversarialMd: string
   sessionSummary: Record<string, unknown>
+  promptEnvelope?: Record<string, unknown>
 }): void {
-  const { runId, artifactDir, task, patchDiff, sessionSummary } = opts
+  const { runId, artifactDir, task, patchDiff, sessionSummary, promptEnvelope } = opts
   console.log()
   console.log(`Run ID: ${runId}`)
   console.log()
@@ -214,6 +215,17 @@ export function printReviewReport(opts: {
   console.log(`  - No credentials to exec:  ${sessionSummary['noCredentialsPassedToExecutor'] ? 'YES' : 'NO'}`)
   console.log(`  - Forbidden files disclosed: 0`)
   console.log()
+
+  if (promptEnvelope) {
+    console.log('Prompt envelope:')
+    console.log(`  - Protocol:   ${promptEnvelope['completionProtocolVersion'] ?? '—'}`)
+    console.log(`  - Model:      ${promptEnvelope['modelId'] ?? '—'}`)
+    const hash = typeof promptEnvelope['agentMessageSha256'] === 'string'
+      ? promptEnvelope['agentMessageSha256'].slice(0, 16) + '…'
+      : '—'
+    console.log(`  - Msg hash:   ${hash}`)
+    console.log()
+  }
 
   console.log('Patch path:')
   console.log(`  ${artifactDir}/PATCH.diff`)

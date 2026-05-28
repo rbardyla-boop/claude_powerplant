@@ -59,6 +59,8 @@ describe('patch-package', () => {
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,
       taskDescription: 'Test task',
+      agentMessage: 'Test task\n\nAfter implementing: call project_run_check.',
+      modelId: 'claude-haiku-4-5-20251001',
     })
 
     const requiredFiles = [
@@ -92,6 +94,8 @@ describe('patch-package', () => {
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,
       taskDescription: 'Test task',
+      agentMessage: 'Test task\n\nAfter implementing: call project_run_check.',
+      modelId: 'claude-haiku-4-5-20251001',
     })
 
     const manifest = JSON.parse(
@@ -117,6 +121,8 @@ describe('patch-package', () => {
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,
       taskDescription: 'Test task',
+      agentMessage: 'Test task\n\nAfter implementing: call project_run_check.',
+      modelId: 'claude-haiku-4-5-20251001',
     })
 
     const patchContent = fs.readFileSync(path.join(patchDir, 'PATCH.diff'), 'utf-8')
@@ -152,6 +158,8 @@ export function summarizeChecks(results) {
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,
       taskDescription: 'Test task',
+      agentMessage: 'Test task\n\nAfter implementing: call project_run_check.',
+      modelId: 'claude-haiku-4-5-20251001',
     })
 
     const patchContent = fs.readFileSync(path.join(patchDir, 'PATCH.diff'), 'utf-8')
@@ -188,6 +196,8 @@ export function summarizeChecks(results) {
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,
       taskDescription: 'Test task',
+      agentMessage: 'Test task\n\nAfter implementing: call project_run_check.',
+      modelId: 'claude-haiku-4-5-20251001',
     })
 
     const summary = JSON.parse(
@@ -217,6 +227,8 @@ export function summarizeChecks(results) {
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,
       taskDescription: 'Test task',
+      agentMessage: 'Test task\n\nAfter implementing: call project_run_check.',
+      modelId: 'claude-haiku-4-5-20251001',
     })
 
     const summary = JSON.parse(
@@ -243,6 +255,8 @@ export function summarizeChecks(results) {
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,
       taskDescription: 'Test task',
+      agentMessage: 'Test task\n\nAfter implementing: call project_run_check.',
+      modelId: 'claude-haiku-4-5-20251001',
     })
 
     const summary = JSON.parse(

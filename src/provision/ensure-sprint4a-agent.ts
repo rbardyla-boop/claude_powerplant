@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import {
   SPRINT4A_AGENT_NAME,
+  SPRINT4A_PILOT_MODEL,
   SPRINT4A_TOOL_LIST_FILES,
   SPRINT4A_TOOL_READ_FILE,
   SPRINT4A_TOOL_WRITE_FILE,
@@ -42,7 +43,7 @@ async function provisionPilotAgent(
   const system = readSystemPrompt()
   const created = await client.beta.agents.create({
     name: SPRINT4A_AGENT_NAME,
-    model: 'claude-haiku-4-5-20251001',
+    model: SPRINT4A_PILOT_MODEL,
     system,
     tools: [
       {

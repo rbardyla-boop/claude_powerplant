@@ -152,6 +152,8 @@ export const SPRINT3V_FINAL_RESPONSE = 'ISOLATED EXECUTOR PROBE COMPLETE' as con
 
 // Sprint 4A — Sanitized External Pilot Project Adapter
 export const SPRINT4A_AGENT_NAME = 'Powerplant Sanitized Project Pilot Agent' as const
+export const SPRINT4A_PILOT_MODEL = 'claude-haiku-4-5-20251001' as const
+export const PROMPT_ENVELOPE_PROTOCOL_VERSION = 'v1' as const
 export const SPRINT4A_STATE_PATH = '.powerplant/state/sprint4a-pilot.json' as const
 export const SPRINT4A_RUNTIME_BASE = '/tmp/powerplant-sprint4a' as const
 export const SPRINT4A_REPORTS_DIR = '.powerplant/reports' as const

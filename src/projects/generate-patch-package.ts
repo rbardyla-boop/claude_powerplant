@@ -9,6 +9,7 @@ import type { PilotVerification } from '../contracts/project-tool-contracts.js'
 import {
   SPRINT4A_PILOT_PROJECT_ID,
   SPRINT4A_CLEARED_FOR_GENERATED_PILOT,
+  PROMPT_ENVELOPE_PROTOCOL_VERSION,
 } from '../config/constants.js'
 import { PILOT_ALLOWED_WRITE_PATHS } from '../contracts/project-pilot-contract.js'
 
@@ -81,6 +82,15 @@ function findChangedWritePaths(
   })
 }
 
+export interface PromptEnvelopeData {
+  userTask: string
+  completionProtocolVersion: string
+  agentMessage: string
+  agentMessageSha256: string
+  modelId: string
+  createdAt: string
+}
+
 export async function generatePatchPackage(opts: {
   runId: string
   snapshot: PilotSnapshot
@@ -90,6 +100,8 @@ export async function generatePatchPackage(opts: {
   finalResponse: string
   patchDir: string
   taskDescription: string
+  agentMessage: string
+  modelId: string
 }): Promise<PatchPackage> {
   const {
     runId,
@@ -100,6 +112,8 @@ export async function generatePatchPackage(opts: {
     finalResponse,
     patchDir,
     taskDescription,
+    agentMessage,
+    modelId,
   } = opts
 
   fs.mkdirSync(patchDir, { recursive: true })
@@ -142,6 +156,23 @@ export async function generatePatchPackage(opts: {
   const taskPath = path.join(patchDir, 'TASK.md')
   fs.writeFileSync(taskPath, taskDescription, 'utf-8')
   patchFiles.push('TASK.md')
+
+  // ── PROMPT_ENVELOPE.json ──────────────────────────────────────────────────
+  const agentMessageSha256 = crypto
+    .createHash('sha256')
+    .update(agentMessage, 'utf-8')
+    .digest('hex')
+  const envelope: PromptEnvelopeData = {
+    userTask: taskDescription,
+    completionProtocolVersion: PROMPT_ENVELOPE_PROTOCOL_VERSION,
+    agentMessage,
+    agentMessageSha256,
+    modelId,
+    createdAt: new Date().toISOString(),
+  }
+  const envelopePath = path.join(patchDir, 'PROMPT_ENVELOPE.json')
+  fs.writeFileSync(envelopePath, JSON.stringify(envelope, null, 2), 'utf-8')
+  patchFiles.push('PROMPT_ENVELOPE.json')
 
   // ── PATCH.diff ────────────────────────────────────────────────────────────
   const changedPaths = findChangedWritePaths(snapshot.baselinePath, snapshot.workspacePath)

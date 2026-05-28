@@ -26,6 +26,7 @@ import {
   SPRINT4A_TOOL_FINALIZE,
   SPRINT4A_MAX_TOOL_CALLS,
   SPRINT4A_FINAL_RESPONSE,
+  SPRINT4A_PILOT_MODEL,
 } from '../config/constants.js'
 
 const FORBIDDEN_WRITE_CONTENT_MARKER = 'POWERPLANT_FORBIDDEN'
@@ -46,6 +47,8 @@ interface BrokerState {
   outputDir: string
   patchDir: string
   taskDescription: string
+  agentMessage: string
+  modelId: string
   testCheckPassed: boolean
   finalizeReceived: boolean
   verification: PilotVerification | null
@@ -176,6 +179,8 @@ async function handleFinalize(state: BrokerState, input: unknown): Promise<strin
     finalResponse: SPRINT4A_FINAL_RESPONSE,
     patchDir: state.patchDir,
     taskDescription: state.taskDescription,
+    agentMessage: state.agentMessage,
+    modelId: state.modelId,
   })
 
   state.patchPackage = pkg
@@ -221,6 +226,8 @@ export async function runProjectPilotBrokerSession(opts: {
     outputDir,
     patchDir,
     taskDescription,
+    agentMessage,
+    modelId: SPRINT4A_PILOT_MODEL,
     testCheckPassed: false,
     finalizeReceived: false,
     verification: null,

@@ -60,6 +60,17 @@ export async function cmdReview(runId: string): Promise<void> {
     process.exit(1)
   }
 
+  // Optional — present only in runs that emitted PROMPT_ENVELOPE.json
+  let promptEnvelope: Record<string, unknown> | undefined
+  const envelopePath = path.join(artifactDir, 'PROMPT_ENVELOPE.json')
+  if (fs.existsSync(envelopePath)) {
+    try {
+      promptEnvelope = JSON.parse(fs.readFileSync(envelopePath, 'utf-8')) as Record<string, unknown>
+    } catch {
+      // Malformed envelope — display without it
+    }
+  }
+
   printReviewReport({
     runId,
     artifactDir,
@@ -69,5 +80,6 @@ export async function cmdReview(runId: string): Promise<void> {
     verificationMd,
     adversarialMd,
     sessionSummary,
+    promptEnvelope,
   })
 }
