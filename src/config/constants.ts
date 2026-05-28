@@ -180,3 +180,8 @@ export const SPRINT4A_CLEARED_FOR_GENERATED_PILOT = true as const
 
 // Skill Invocation Audit — Stage 2A
 export const SKILL_INVOCATION_AUDIT_FILENAME = 'skill-invocation-audit.jsonl' as const
+
+// Skill Lifecycle — Stage 2B: Sanitized Project Invocation
+export const SKILL_GUIDED_PILOT_RUNNER_TYPE = 'live-sanitized-pilot' as const
+export const SKILL_INVOCATION_PHASE_A = 'phase-a-pre-session' as const
+export const SKILL_INVOCATION_PHASE_B = 'phase-b-completion' as const
