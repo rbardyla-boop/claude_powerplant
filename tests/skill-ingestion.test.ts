@@ -521,7 +521,7 @@ describe('copyToSnapshot: pre-open mtime mismatch (stale validation)', () => {
         dev: stat.dev,
       }]
 
-      const result = await copyToSnapshot(entries, destDir)
+      const result = await copyToSnapshot(entries, destDir, DEFAULT_GATE0_LIMITS)
 
       expect(result.success).toBe(false)
       if (!result.success) expect(result.reason).toMatch(/modified during ingestion/i)
@@ -539,7 +539,7 @@ describe('copyToSnapshot: pre-open mtime mismatch (stale validation)', () => {
       const filePath = path.join(srcDir, 'file.txt')
       fs.writeFileSync(filePath, 'content')
 
-      const result = await copyToSnapshot([makeValidatedEntry(filePath)], destDir)
+      const result = await copyToSnapshot([makeValidatedEntry(filePath)], destDir, DEFAULT_GATE0_LIMITS)
 
       expect(result.success).toBe(true)
       expect(fs.existsSync(path.join(destDir, 'file.txt'))).toBe(true)
@@ -571,7 +571,7 @@ describe('copyToSnapshot: post-open inode identity check', () => {
         dev: stat.dev,
       }]
 
-      const result = await copyToSnapshot(entries, destDir)
+      const result = await copyToSnapshot(entries, destDir, DEFAULT_GATE0_LIMITS)
 
       expect(result.success).toBe(false)
       if (!result.success) expect(result.reason).toMatch(/replaced.*inode/i)
@@ -602,7 +602,7 @@ describe('copyToSnapshot: beforeOpen hook — symlink substitution', () => {
         },
       }
 
-      const result = await copyToSnapshot([entry], destDir, hooks)
+      const result = await copyToSnapshot([entry], destDir, DEFAULT_GATE0_LIMITS, hooks)
 
       expect(result.success).toBe(false)
       if (!result.success) {
@@ -635,7 +635,7 @@ describe('copyToSnapshot: afterWrite hook — source mutation during copy window
         },
       }
 
-      const result = await copyToSnapshot([entry], destDir, hooks)
+      const result = await copyToSnapshot([entry], destDir, DEFAULT_GATE0_LIMITS, hooks)
 
       expect(result.success).toBe(false)
       if (!result.success) expect(result.reason).toMatch(/changed during copying/i)
@@ -661,13 +661,187 @@ describe('copyToSnapshot: exclusive destination creation', () => {
       // Pre-create the destination to simulate an unexpected collision
       fs.writeFileSync(path.join(destDir, 'file.txt'), 'existing-content')
 
-      const result = await copyToSnapshot([entry], destDir)
+      const result = await copyToSnapshot([entry], destDir, DEFAULT_GATE0_LIMITS)
 
       expect(result.success).toBe(false)
       if (!result.success) expect(result.reason).toMatch(/destination already exists/i)
 
       // Existing file must be untouched
       expect(fs.readFileSync(path.join(destDir, 'file.txt'), 'utf-8')).toBe('existing-content')
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true })
+      fs.rmSync(destDir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── Bounded-copy adversarial tests ───────────────────────────────────────────
+// These tests prove that Gate 0 never reads/writes past its configured budgets,
+// even when the source grows after initial validation. The afterChunk hook injects
+// growth between chunk writes without any timing dependence.
+
+describe('bounded copy: source grows beyond validated entry size during copy', () => {
+  test('rejects growth and leaves no accepted destination file', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grow-size-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grow-size-dest-'))
+    try {
+      const filePath = path.join(srcDir, 'file.txt')
+      fs.writeFileSync(filePath, 'x'.repeat(50))
+      const entry = makeValidatedEntry(filePath)  // entry.sizeBytes = 50
+
+      let hookFired = false
+      const hooks: Gate0CopyHooks = {
+        afterChunk: () => {
+          if (!hookFired) {
+            hookFired = true
+            // Append after the first chunk is written — source now 200 bytes
+            fs.appendFileSync(filePath, 'y'.repeat(150))
+          }
+        },
+      }
+
+      const result = await copyToSnapshot([entry], destDir, DEFAULT_GATE0_LIMITS, hooks)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.reason).toMatch(/grew beyond validated size/i)
+      }
+      // Partial destination must be cleaned up
+      expect(fs.readdirSync(destDir)).toHaveLength(0)
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true })
+      fs.rmSync(destDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('bounded copy: source grows beyond maxFileSizeBytes during copy', () => {
+  test('rejects growth past the per-file budget ceiling', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grow-maxfile-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grow-maxfile-dest-'))
+    try {
+      const filePath = path.join(srcDir, 'file.txt')
+      // Use a custom limit with a very small maxFileSizeBytes for testability.
+      // sizeBytes in the crafted entry is larger than the actual file so the
+      // entry.sizeBytes check does not fire first — only maxFileSizeBytes fires.
+      const CUSTOM_MAX = 80
+      const customLimits = { ...DEFAULT_GATE0_LIMITS, maxFileSizeBytes: CUSTOM_MAX }
+      fs.writeFileSync(filePath, 'x'.repeat(60))
+      const actualStat = fs.lstatSync(filePath)
+      // Craft entry with sizeBytes = 10 MB so entry.sizeBytes guard won't fire
+      const entry: ValidatedFileEntry = {
+        relativePath: 'file.txt',
+        absolutePath: filePath,
+        sizeBytes: 10 * 1024 * 1024,
+        mtimeMs: actualStat.mtimeMs,
+        ino: actualStat.ino,
+        dev: actualStat.dev,
+      }
+
+      let hookFired = false
+      const hooks: Gate0CopyHooks = {
+        afterChunk: () => {
+          if (!hookFired) {
+            hookFired = true
+            // Grow source past CUSTOM_MAX
+            fs.appendFileSync(filePath, 'z'.repeat(60))  // now 120 bytes > 80
+          }
+        },
+      }
+
+      const result = await copyToSnapshot([entry], destDir, customLimits, hooks)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.reason).toMatch(/exceeded max file size/i)
+      }
+      expect(fs.readdirSync(destDir)).toHaveLength(0)
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true })
+      fs.rmSync(destDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('bounded copy: cumulative package bytes exceed maxTotalSizeBytes', () => {
+  test('rejects second file when cumulative bytes exceed total budget', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grow-total-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grow-total-dest-'))
+    try {
+      // Two files of 40 bytes each; total budget = 60 bytes
+      const customLimits = { ...DEFAULT_GATE0_LIMITS, maxTotalSizeBytes: 60 }
+      const f1 = path.join(srcDir, 'file1.txt')
+      const f2 = path.join(srcDir, 'file2.txt')
+      fs.writeFileSync(f1, 'x'.repeat(40))
+      fs.writeFileSync(f2, 'y'.repeat(40))
+
+      const entries = [makeValidatedEntry(f1), makeValidatedEntry(f2)]
+      const result = await copyToSnapshot(entries, destDir, customLimits)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.reason).toMatch(/exceeded max total size/i)
+      }
+      // Only file1 may have been written; file2 must not exist or be cleaned up
+      const destFiles = fs.readdirSync(destDir)
+      expect(destFiles).not.toContain('file2.txt')
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true })
+      fs.rmSync(destDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('bounded copy: partial destination cleanup on chunk-loop failure', () => {
+  test('removes partial destination when growth triggers rejection mid-copy', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cleanup-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cleanup-dest-'))
+    try {
+      const filePath = path.join(srcDir, 'file.txt')
+      fs.writeFileSync(filePath, 'a'.repeat(50))
+      const entry = makeValidatedEntry(filePath)
+
+      // After the first chunk is written to dest, grow source to trigger rejection
+      let hookFired = false
+      const hooks: Gate0CopyHooks = {
+        afterChunk: () => {
+          if (!hookFired) {
+            hookFired = true
+            fs.appendFileSync(filePath, 'b'.repeat(200))
+          }
+        },
+      }
+
+      const result = await copyToSnapshot([entry], destDir, DEFAULT_GATE0_LIMITS, hooks)
+
+      expect(result.success).toBe(false)
+      expect(hookFired).toBe(true)  // hook fired — at least one chunk was written before failure
+      // The partial destination must be deleted, not left behind
+      expect(fs.readdirSync(destDir)).toHaveLength(0)
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true })
+      fs.rmSync(destDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('bounded copy: successful copy is byte-exact', () => {
+  test('copies valid file through bounded routine and verifies exact byte count', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exact-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exact-dest-'))
+    try {
+      const content = 'hello bounded copy test\n'.repeat(100)  // 2400 bytes
+      const filePath = path.join(srcDir, 'file.txt')
+      fs.writeFileSync(filePath, content)
+
+      const result = await copyToSnapshot(
+        [makeValidatedEntry(filePath)], destDir, DEFAULT_GATE0_LIMITS
+      )
+
+      expect(result.success).toBe(true)
+      const destContent = fs.readFileSync(path.join(destDir, 'file.txt'), 'utf-8')
+      expect(destContent).toBe(content)
+      expect(destContent.length).toBe(content.length)
     } finally {
       fs.rmSync(srcDir, { recursive: true, force: true })
       fs.rmSync(destDir, { recursive: true, force: true })

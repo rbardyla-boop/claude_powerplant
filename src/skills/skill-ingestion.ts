@@ -34,13 +34,17 @@ export const DEFAULT_GATE0_LIMITS: Gate0Limits = {
 /**
  * Hooks for deterministic adversarial testing. Never populated in production.
  *
- * beforeOpen — called after lstat validation, before opening the source handle.
- *              Use to simulate path substitution at the open boundary.
- * afterWrite  — called after writing content to destination, before post-copy fstat.
- *              Use to simulate source mutation during the copy window.
+ * beforeOpen  — called after lstat validation, before opening the source handle.
+ *               Use to simulate path substitution at the open boundary.
+ * afterChunk  — called after each chunk is written to the destination.
+ *               bytesWrittenSoFar is the running total for this file.
+ *               Use to simulate source growth during the copy window.
+ * afterWrite  — called after all chunks are written, before post-copy fstat.
+ *               Use to simulate source mutation after full write.
  */
 export interface Gate0CopyHooks {
   beforeOpen?: (entry: ValidatedFileEntry) => void
+  afterChunk?: (entry: ValidatedFileEntry, bytesWrittenSoFar: number) => void
   afterWrite?: (entry: ValidatedFileEntry) => void
 }
 
@@ -225,11 +229,18 @@ async function walkSourceDirectory(
 const NO_FOLLOW_OPEN_SUPPORTED =
   'O_NOFOLLOW' in fs.constants && (fs.constants.O_NOFOLLOW as number) !== 0
 
+// Chunk size for bounded copy. Small enough to check limits frequently;
+// large enough for efficient I/O. 64 KB fits within the 512 KB per-file limit.
+const COPY_CHUNK_SIZE = 64 * 1024
+
 async function copyFileSecure(
   entry: ValidatedFileEntry,
   destDir: string,
+  limits: Gate0Limits,
+  priorPackageBytes: number,   // bytes already copied from earlier files in this batch
+  readBuf: Buffer,              // shared buffer; reused across files for efficiency
   hooks?: Gate0CopyHooks
-): Promise<{ success: false; reason: string } | { success: true }> {
+): Promise<{ success: false; reason: string } | { success: true; bytesCopied: number }> {
   const destPath = path.join(destDir, entry.relativePath)
 
   // Test hook: simulate path substitution just before open.
@@ -284,7 +295,6 @@ async function copyFileSecure(
     }
 
     // Snapshot pre-copy identity for post-copy verification.
-    const preSize = preStat.size
     const preMtime = preStat.mtimeMs
     const preCtime = preStat.ctimeMs   // best-effort; ctime semantics vary by filesystem
 
@@ -305,13 +315,51 @@ async function copyFileSecure(
       throw err
     }
 
+    // Bounded chunk copy from opened source handle.
+    // Limits are enforced BEFORE writing each chunk so Powerplant never
+    // allocates or writes more than the Gate 0 budget permits.
+    let bytesCopiedThisFile = 0
     let copyError: { success: false; reason: string } | null = null
     try {
-      const content = await srcHandle.readFile()
-      await destHandle.writeFile(content)
-      await destHandle.sync()
+      while (true) {
+        const { bytesRead: n } = await srcHandle.read(readBuf, 0, readBuf.length, null)
+        if (n === 0) break
+
+        bytesCopiedThisFile += n
+
+        // Enforce all budgets before writing the chunk.
+        if (bytesCopiedThisFile > entry.sizeBytes) {
+          copyError = { success: false, reason: `Source file grew beyond validated size during copy: ${entry.relativePath}` }
+          break
+        }
+        if (bytesCopiedThisFile > limits.maxFileSizeBytes) {
+          copyError = { success: false, reason: `Source file exceeded max file size during copy: ${entry.relativePath}` }
+          break
+        }
+        if (priorPackageBytes + bytesCopiedThisFile > limits.maxTotalSizeBytes) {
+          copyError = { success: false, reason: `Package exceeded max total size during copy: ${entry.relativePath}` }
+          break
+        }
+
+        await destHandle.write(readBuf, 0, n)
+
+        // Test hook: inject source growth after each chunk write.
+        hooks?.afterChunk?.(entry, bytesCopiedThisFile)
+      }
+
+      // Require exact byte count at the end of a successful loop.
+      if (!copyError && bytesCopiedThisFile !== entry.sizeBytes) {
+        copyError = {
+          success: false,
+          reason: `Byte count mismatch after copy: copied ${bytesCopiedThisFile}, expected ${entry.sizeBytes}: ${entry.relativePath}`,
+        }
+      }
+
+      if (!copyError) {
+        await destHandle.sync()
+      }
     } catch (err) {
-      copyError = { success: false, reason: `Failed to copy file: ${entry.relativePath}: ${(err as Error).message}` }
+      copyError = { success: false, reason: `Read/write error during copy: ${entry.relativePath}: ${(err as Error).message}` }
     } finally {
       try { await destHandle.close() } catch { /* ignore */ }
     }
@@ -321,14 +369,14 @@ async function copyFileSecure(
       return copyError
     }
 
-    // Test hook: simulate source mutation during the post-write window.
+    // Test hook: simulate source mutation after full write, before post-copy fstat.
     hooks?.afterWrite?.(entry)
 
     // Post-copy fstat: source identity must be unchanged since we read it.
-    // Checks size, mtime, and ctime (ctime best-effort on FAT/network FS).
+    // Checks mtime and ctime (ctime best-effort on FAT/network FS).
     const postStat = await srcHandle.stat()
     const identityChanged =
-      postStat.size !== preSize ||
+      postStat.size !== entry.sizeBytes ||
       postStat.mtimeMs !== preMtime ||
       postStat.ctimeMs !== preCtime
 
@@ -341,18 +389,24 @@ async function copyFileSecure(
     try { await srcHandle.close() } catch { /* ignore */ }
   }
 
-  return { success: true }
+  return { success: true, bytesCopied: entry.sizeBytes }
 }
 
 export async function copyToSnapshot(
   files: ValidatedFileEntry[],
   destDir: string,
+  limits: Gate0Limits,
   hooks?: Gate0CopyHooks
 ): Promise<{ success: false; reason: string } | { success: true }> {
+  const readBuf = Buffer.allocUnsafe(COPY_CHUNK_SIZE)
+  let packageBytesCopied = 0
+
   for (const file of files) {
-    const result = await copyFileSecure(file, destDir, hooks)
+    const result = await copyFileSecure(file, destDir, limits, packageBytesCopied, readBuf, hooks)
     if (!result.success) return result
+    packageBytesCopied += result.bytesCopied
   }
+
   return { success: true }
 }
 
@@ -424,7 +478,7 @@ export async function ingestSkillPackage(
   const candidatePath = getCandidatePath(candidateId)
   fs.mkdirSync(candidatePath, { recursive: true, mode: 0o700 })
 
-  const copyResult = await copyToSnapshot(walkResult.files, candidatePath)
+  const copyResult = await copyToSnapshot(walkResult.files, candidatePath, effectiveLimits)
   if (!copyResult.success) {
     // Snapshot creation failed — clean up and reject.
     try { fs.rmSync(candidatePath, { recursive: true, force: true }) } catch { /* best-effort */ }
