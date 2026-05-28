@@ -1,3 +1,4 @@
+import path from 'path'
 import { z } from 'zod'
 import {
   SPRINT4A_TOOL_LIST_FILES,
@@ -7,11 +8,7 @@ import {
   SPRINT4A_TOOL_FINALIZE,
   SPRINT4A_MAX_CONTENT_LENGTH,
 } from '../config/constants.js'
-import {
-  PILOT_ALLOWED_READ_PATHS,
-  PILOT_ALLOWED_WRITE_PATHS,
-  PILOT_ALLOWED_CHECK_IDS,
-} from './project-pilot-contract.js'
+import { matchesGlob } from '../projects/build-sanitized-workspace.js'
 
 // ── Tool names ────────────────────────────────────────────────────────────────
 
@@ -29,24 +26,45 @@ export function isKnownPilotToolName(name: string): name is PilotToolName {
   return (PILOT_TOOL_NAMES as readonly string[]).includes(name)
 }
 
+// ── Path shape validation (schema level) ──────────────────────────────────────
+// These checks validate format only — they do NOT enforce contract authorization.
+// Authorization (is this path actually allowed?) is the broker's responsibility.
+
+function isSafeRelativePath(p: string): boolean {
+  if (!p) return false
+  if (path.isAbsolute(p)) return false
+  if (p.includes('..')) return false
+  if (p.includes('\0')) return false
+  return true
+}
+
 // ── Input schemas ─────────────────────────────────────────────────────────────
 
 export const ListFilesInputSchema = z.object({}).strict()
 export type ListFilesInput = z.infer<typeof ListFilesInputSchema>
 
 export const ReadFileInputSchema = z.object({
-  path: z.enum(PILOT_ALLOWED_READ_PATHS),
+  path: z.string().min(1).max(500).refine(isSafeRelativePath, {
+    message: 'Path must be a safe relative path (no absolute paths or .. traversal)',
+  }),
 }).strict()
 export type ReadFileInput = z.infer<typeof ReadFileInputSchema>
 
 export const WriteFileInputSchema = z.object({
-  path: z.enum(PILOT_ALLOWED_WRITE_PATHS),
+  path: z.string().min(1).max(500).refine(isSafeRelativePath, {
+    message: 'Path must be a safe relative path (no absolute paths or .. traversal)',
+  }),
   content: z.string().max(SPRINT4A_MAX_CONTENT_LENGTH),
 }).strict()
 export type WriteFileInput = z.infer<typeof WriteFileInputSchema>
 
+// Check IDs are simple identifiers — spaces and shell metacharacters are rejected
+// at the schema level because a valid check ID is never a shell command string.
 export const RunCheckInputSchema = z.object({
-  check: z.enum(PILOT_ALLOWED_CHECK_IDS),
+  check: z.string().min(1).max(100).regex(
+    /^[a-zA-Z][a-zA-Z0-9_-]*$/,
+    'Check ID must start with a letter and contain only letters, digits, underscores, or hyphens',
+  ),
 }).strict()
 export type RunCheckInput = z.infer<typeof RunCheckInputSchema>
 
@@ -89,14 +107,36 @@ export const FinalizeResultSchema = z.object({
 export type FinalizeResult = z.infer<typeof FinalizeResultSchema>
 
 // ── Executor verification proof (written by container) ────────────────────────
+// checkId and fixedAction are now generic strings — not literals — because
+// different projects may declare different named checks.
 
 export const PilotVerificationSchema = z.object({
-  checkId: z.literal('test'),
-  fixedAction: z.literal('node --test'),
+  checkId: z.string(),
+  fixedAction: z.string(),
   exitCode: z.number().int(),
   passed: z.boolean(),
 })
 export type PilotVerification = z.infer<typeof PilotVerificationSchema>
+
+// ── Runtime path authorization (broker level) ─────────────────────────────────
+// These functions check whether a validated path/check is authorized by the
+// loaded project contract. They use the same matchesGlob used by the sanitizer,
+// so glob patterns in POLICY.yaml are interpreted consistently.
+
+export function isReadPathAuthorized(relPath: string, allowedReadPaths: string[]): boolean {
+  return allowedReadPaths.some(pattern => matchesGlob(relPath, pattern))
+}
+
+export function isWritePathAuthorized(relPath: string, allowedWritePaths: string[]): boolean {
+  return allowedWritePaths.some(pattern => matchesGlob(relPath, pattern))
+}
+
+export function isCheckAuthorized(
+  checkId: string,
+  allowedChecks: Record<string, { command: string }>,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(allowedChecks, checkId)
+}
 
 // ── Dispatch helper ───────────────────────────────────────────────────────────
 

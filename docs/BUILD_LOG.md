@@ -846,3 +846,55 @@ and fixed verification — without modifying or mounting the source project.
 - **ADR-0020**: Include-only sanitizer + SHA-256 source integrity proof is the minimum required before any real project is admitted.
 
 ---
+
+## RC2 — Generic Contract-Driven Engine
+
+**Triggered by:** First real-project dogfood preflight (Singularity Inc.) found that RC1 was pilot-hardcoded.
+
+**Dogfood blocker recorded:**
+
+RC1 validated only the generated pilot. The first real-project preflight found that
+`powerplant inspect` and `powerplant run` checked for `.powerplant/POLICY.yaml` existence
+but then ignored its contents, using `{ ...SPRINT4A_PILOT_CONTRACT, sourcePath: absPath }`
+instead. Runtime enforced pilot's hardcoded paths (`src/status.js`, `tests/status.test.js`)
+regardless of what the project policy file declared. Creating a Singularity Inc. contract
+would have created a false safety boundary. Work stopped immediately.
+
+**What changed:**
+
+- `src/projects/load-project-contract.ts` (new): reads and validates POLICY.yaml + VERIFY.yaml;
+  enforces hard-coded invariants (workspaceMode, realProjectMounted, allowBash) regardless of
+  YAML content; rejects forbidden read paths (.env, credentials, keys, Steam signing material).
+- `src/contracts/project-tool-contracts.ts`: removed `z.enum(PILOT_ALLOWED_READ_PATHS)` etc.
+  from input schemas; schemas now validate shape only (safe relative path, bounded string, valid
+  identifier regex); new runtime authorization functions (`isReadPathAuthorized`, `isWritePathAuthorized`,
+  `isCheckAuthorized`) use `matchesGlob` for consistent glob semantics.
+- `src/provision/ensure-sprint4a-agent.ts`: agent tool schemas changed from enum arrays to generic
+  string descriptors; `toolSchemaVersion = 2` added to Sprint4a state so stale agents with
+  old enum schemas are automatically re-provisioned.
+- `src/broker/project-tool-broker.ts`: accepts `LoadedProjectContract`; broker enforces
+  authorization on every `project_read_file`, `project_write_file`, `project_run_check` call.
+- `src/cli/commands/inspect.ts` + `run.ts`: both now call `loadProjectContract(absPath)` instead
+  of spreading the pilot constant.
+- `src/projects/generate-patch-package.ts`: `findChangedWritePaths` walks the workspace and
+  matches against `contract.allowedWritePaths` globs; no longer references pilot constants;
+  `projectId` taken from loaded contract; `clearedForSanitizedExternalProjectInput` is now
+  `true` for any run backed by a valid YAML contract.
+- `fixtures/generic-game-qa-project/` (new): structurally different from the pilot
+  (`src/engine/**`, `src-tauri/`, Steam canary files) to prove the engine is genuinely
+  generic and not hardcoded a second time.
+- Pilot project `.powerplant/` YAML files rewritten to match the loader's schema.
+- `js-yaml` added as the YAML parser (smallest well-maintained option, zero deps).
+
+**Invariants preserved unchanged:**
+
+- No real project source ever mounted into the executor
+- No built-in Managed Agent tools
+- Executor runs network-disabled, credentialless
+- Patch application remains manual
+- `clearedForRealProjectMounting` remains permanently `false`
+
+**Test result:** 463 tests passing (34 files). +37 new contract loader tests.
+
+**Next step:** Create Singularity Inc. `.powerplant/` contract (narrow QA-only scope),
+run `powerplant inspect` against it, confirm no pilot paths appear in the disclosure.

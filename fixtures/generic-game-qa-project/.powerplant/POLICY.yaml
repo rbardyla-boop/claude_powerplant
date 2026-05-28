@@ -1,0 +1,35 @@
+projectId: generic-game-qa-fixture
+
+includePaths:
+  - package.json
+  - src/engine/**
+  - .powerplant/**
+
+excludePaths:
+  - src/steam/**
+  - src-tauri/**
+  - dist/**
+  - .git/**
+  - node_modules/**
+  - .env
+  - .env.*
+  - "**/*.key"
+  - "**/*.pem"
+  - credentials*.json
+
+denyIfPresentAfterCopy:
+  - .env
+  - .git
+  - node_modules
+  - credentials.json
+
+allowedReadPaths:
+  - package.json
+  - src/engine/**
+  - .powerplant/PROJECT.md
+  - .powerplant/POLICY.yaml
+  - .powerplant/VERIFY.yaml
+  - .powerplant/QUALITY.md
+
+allowedWritePaths:
+  - src/engine/tests/**

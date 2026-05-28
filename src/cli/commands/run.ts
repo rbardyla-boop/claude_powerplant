@@ -2,12 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import fs from 'fs'
 import path from 'path'
 import readline from 'readline'
-import { SPRINT4A_PILOT_CONTRACT } from '../../contracts/project-pilot-contract.js'
-import {
-  PILOT_ALLOWED_READ_PATHS,
-  PILOT_ALLOWED_WRITE_PATHS,
-  PILOT_ALLOWED_CHECK_IDS,
-} from '../../contracts/project-pilot-contract.js'
+import { loadProjectContract } from '../../projects/load-project-contract.js'
 import { previewSanitization } from '../../projects/preview-sanitization.js'
 import { buildPilotSnapshot } from '../../projects/build-pilot-snapshot.js'
 import { verifySourceUnchanged } from '../../projects/verify-source-unchanged.js'
@@ -66,7 +61,14 @@ export async function cmdRun(
     process.exit(1)
   }
 
-  const contract = { ...SPRINT4A_PILOT_CONTRACT, sourcePath: absPath }
+  // Load and validate the actual project contract from POLICY.yaml + VERIFY.yaml
+  let contract
+  try {
+    contract = loadProjectContract(absPath)
+  } catch (err) {
+    console.error(`Error: Contract load failed — ${String(err).replace('Error: ', '')}`)
+    process.exit(1)
+  }
 
   let preview
   try {
@@ -77,13 +79,14 @@ export async function cmdRun(
   }
 
   const projectName = path.basename(absPath)
+  const declaredChecks = Object.keys(contract.allowedChecks)
 
   printRunDisclosureSummary({
     projectName,
     preview,
-    allowedReadPaths: [...PILOT_ALLOWED_READ_PATHS],
-    allowedWritePaths: [...PILOT_ALLOWED_WRITE_PATHS],
-    allowedChecks: [...PILOT_ALLOWED_CHECK_IDS],
+    allowedReadPaths: contract.allowedReadPaths,
+    allowedWritePaths: contract.allowedWritePaths,
+    allowedChecks: declaredChecks,
     forbiddenPaths: contract.excludePaths,
   })
 
@@ -148,11 +151,13 @@ export async function cmdRun(
   console.log(`Snapshot:  ${snapshot.sanitizedManifest.files.length} files`)
   console.log('Starting broker session...')
 
-  // Append mandatory procedure reminder so Haiku calls project_run_check + project_finalize
+  // Append mandatory procedure reminder so the agent calls project_run_check + project_finalize.
+  // Reference the first declared check ID so the instruction is contract-driven.
+  const firstCheckId = declaredChecks[0] ?? 'test'
   const wrappedTask =
     `${task.trim()}\n\n` +
     `After implementing the task:\n` +
-    `1. Call project_run_check with { "check": "test" }.\n` +
+    `1. Call project_run_check with { "check": "${firstCheckId}" }.\n` +
     `2. If tests fail, fix the implementation or tests and re-run.\n` +
     `3. After tests pass, call project_finalize with a brief summary.\n` +
     `4. Respond with exactly: SANITIZED PILOT PATCH COMPLETE`
@@ -165,6 +170,7 @@ export async function cmdRun(
       agentVersion: state.agent.version,
       environmentId: state.environmentId,
       snapshot,
+      contract,
       runId,
       outputDir,
       patchDir,

@@ -5,35 +5,23 @@ import os from 'os'
 import { buildPilotSnapshot } from '../src/projects/build-pilot-snapshot.js'
 import { verifySourceUnchanged } from '../src/projects/verify-source-unchanged.js'
 import { generatePatchPackage } from '../src/projects/generate-patch-package.js'
+import { loadProjectContract } from '../src/projects/load-project-contract.js'
 import type { PilotVerification } from '../src/contracts/project-tool-contracts.js'
-import type { ProjectContract } from '../src/projects/project-contract.js'
+import type { LoadedProjectContract } from '../src/projects/load-project-contract.js'
 
 const PILOT_SOURCE = '/home/thebackhand/Downloads/grok/powerplant_pilot_status'
 
 let tempDir: string
+let pilotContract: LoadedProjectContract
 
 beforeAll(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-patch-test-'))
+  pilotContract = loadProjectContract(PILOT_SOURCE)
 })
 
 afterAll(() => {
   fs.rmSync(tempDir, { recursive: true, force: true })
 })
-
-const pilotContract: ProjectContract = {
-  projectId: 'powerplant-pilot-status',
-  sourcePath: PILOT_SOURCE,
-  includePaths: ['package.json', 'README.md', 'src/**', 'tests/**', '.powerplant/**'],
-  excludePaths: [
-    '.env', '.env.*', 'private/**', 'deployment/**',
-    '.git/**', 'node_modules/**', 'package-lock.json',
-    'credentials*.json', '**/*.key', '**/*.pem',
-  ],
-  denyIfPresentAfterCopy: ['.env', 'private', 'deployment', '.git', 'node_modules', 'credentials.json'],
-  workspaceMode: 'sanitized_copy_only',
-  allowBash: false,
-  realProjectMounted: false,
-}
 
 const mockVerification: PilotVerification = {
   checkId: 'test',
@@ -53,6 +41,7 @@ describe('patch-package', () => {
     const pkg = await generatePatchPackage({
       runId: 'test-run-1',
       snapshot,
+      contract: pilotContract,
       sourceVerification,
       verification: mockVerification,
       customToolCounts: { project_read_file: 2, project_write_file: 2, project_run_check: 1, project_finalize: 1 },
@@ -88,6 +77,7 @@ describe('patch-package', () => {
     await generatePatchPackage({
       runId: 'test-run-2',
       snapshot,
+      contract: pilotContract,
       sourceVerification,
       verification: mockVerification,
       customToolCounts: {},
@@ -115,6 +105,7 @@ describe('patch-package', () => {
     await generatePatchPackage({
       runId: 'test-run-3',
       snapshot,
+      contract: pilotContract,
       sourceVerification,
       verification: mockVerification,
       customToolCounts: {},
@@ -152,6 +143,7 @@ export function summarizeChecks(results) {
     await generatePatchPackage({
       runId: 'test-run-4',
       snapshot,
+      contract: pilotContract,
       sourceVerification,
       verification: mockVerification,
       customToolCounts: {},
@@ -190,6 +182,7 @@ export function summarizeChecks(results) {
     await generatePatchPackage({
       runId: 'test-run-5',
       snapshot,
+      contract: pilotContract,
       sourceVerification,
       verification: mockVerification,
       customToolCounts: {},
@@ -204,7 +197,8 @@ export function summarizeChecks(results) {
       fs.readFileSync(path.join(patchDir, 'SESSION_SUMMARY.json'), 'utf-8'),
     )
     expect(summary.clearedForRealProjectMounting).toBe(false)
-    expect(summary.clearedForSanitizedExternalProjectInput).toBe(false)
+    // Any run with a valid POLICY.yaml contract sets this to true
+    expect(summary.clearedForSanitizedExternalProjectInput).toBe(true)
     expect(summary.originalProjectMounted).toBe(false)
     expect(summary.sanitizedWorkspaceUsed).toBe(true)
     expect(summary.executorNetworkDisabled).toBe(true)
@@ -221,6 +215,7 @@ export function summarizeChecks(results) {
     await generatePatchPackage({
       runId: 'test-run-6',
       snapshot,
+      contract: pilotContract,
       sourceVerification,
       verification: mockVerification, // passed: true
       customToolCounts: {},
@@ -234,8 +229,9 @@ export function summarizeChecks(results) {
     const summary = JSON.parse(
       fs.readFileSync(path.join(patchDir, 'SESSION_SUMMARY.json'), 'utf-8'),
     )
-    // Both verification passed AND sourceUnmodified → true
+    // Both verification passed AND sourceUnmodified AND is the pilot project → true
     expect(summary.clearedForGeneratedExternalPilot).toBe(true)
+    expect(summary.projectId).toBe('powerplant-pilot-status')
   })
 
   it('SESSION_SUMMARY clearedForGeneratedExternalPilot is false when test failed', async () => {
@@ -249,6 +245,7 @@ export function summarizeChecks(results) {
     await generatePatchPackage({
       runId: 'test-run-7',
       snapshot,
+      contract: pilotContract,
       sourceVerification,
       verification: failedVerification,
       customToolCounts: {},

@@ -2,7 +2,7 @@
 
 **Powerplant lets Claude produce tested patches from sanitized project snapshots without touching your working repository, inheriting your secrets, or receiving unrestricted execution authority.**
 
-Version: v0.1 (engine proof)
+Version: v0.1 (contract-driven engine)
 
 ---
 
@@ -89,7 +89,44 @@ Powerplant v0.1 is appropriate for projects that meet all of the following:
 
 ### 1. Give a project a `.powerplant/` contract
 
-Create `.powerplant/POLICY.yaml` in your project declaring the project ID. The inspect command validates this file exists before doing anything else.
+Create `.powerplant/POLICY.yaml` and `.powerplant/VERIFY.yaml` in your project. Both files are **required and operative** — Powerplant reads and enforces them. A YAML file that exists but does not match the expected schema fails closed before any snapshot is built.
+
+**POLICY.yaml** — declares what Claude may see and change:
+
+```yaml
+projectId: my-project
+
+includePaths:       # files copied into the sanitized snapshot
+  - package.json
+  - src/engine/**
+  - .powerplant/**
+
+excludePaths:       # files that must never enter the snapshot
+  - .env
+  - src-tauri/**
+  - dist/**
+
+denyIfPresentAfterCopy:   # snapshot validation canaries
+  - .env
+  - credentials.json
+
+allowedReadPaths:   # files Claude may request via project_read_file
+  - package.json
+  - src/engine/**
+
+allowedWritePaths:  # files Claude may write (disposable workspace only)
+  - src/engine/tests/**
+```
+
+**VERIFY.yaml** — declares named verification checks:
+
+```yaml
+checks:
+  test:
+    command: "node --test"
+```
+
+Hard-coded invariants the YAML cannot override: `workspaceMode: sanitized_copy_only`, `realProjectMounted: false`, no bash, no network, no credential passthrough.
 
 ### 2. Inspect before sending anything to Claude
 

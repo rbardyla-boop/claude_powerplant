@@ -6,7 +6,7 @@ import {
   SPRINT4A_PILOT_SOURCE_PATH,
   SPRINT4A_FINAL_RESPONSE,
 } from '../config/constants.js'
-import { SPRINT4A_PILOT_CONTRACT } from '../contracts/project-pilot-contract.js'
+import { loadProjectContract } from '../projects/load-project-contract.js'
 import { buildPilotSnapshot } from '../projects/build-pilot-snapshot.js'
 import { verifySourceUnchanged } from '../projects/verify-source-unchanged.js'
 import { runProjectPilotBrokerSession } from '../broker/project-tool-broker.js'
@@ -84,7 +84,7 @@ export async function runSanitizedProjectPilot(opts: {
   fs.mkdirSync(patchDir, { recursive: true })
 
   console.log('[sprint4a] building sanitized snapshot...')
-  const contract = { ...SPRINT4A_PILOT_CONTRACT, sourcePath: SPRINT4A_PILOT_SOURCE_PATH }
+  const contract = loadProjectContract(SPRINT4A_PILOT_SOURCE_PATH)
   const snapshot = buildPilotSnapshot(contract, runDir)
   console.log('[sprint4a] baseline:', snapshot.baselinePath)
   console.log('[sprint4a] workspace:', snapshot.workspacePath)
@@ -97,6 +97,7 @@ export async function runSanitizedProjectPilot(opts: {
     agentVersion: agent.version,
     environmentId: state.environmentId,
     snapshot,
+    contract,
     runId,
     outputDir,
     patchDir,

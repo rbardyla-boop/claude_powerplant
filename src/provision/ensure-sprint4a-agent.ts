@@ -11,14 +11,14 @@ import {
   SPRINT4A_TOOL_FINALIZE,
   SPRINT4A_MAX_CONTENT_LENGTH,
 } from '../config/constants.js'
-import {
-  PILOT_ALLOWED_READ_PATHS,
-  PILOT_ALLOWED_WRITE_PATHS,
-  PILOT_ALLOWED_CHECK_IDS,
-} from '../contracts/project-pilot-contract.js'
 import { loadSprint4aState, saveSprint4aState } from '../platform/sprint4a-state.js'
 import { loadState } from '../platform/managed-agent-state.js'
 import type { Sprint4aState } from '../platform/sprint4a-state.js'
+
+// Bump when tool schemas change — triggers re-provisioning of the Managed Agent.
+// The schema version is stored in agent state so stale agents with old enum-based
+// schemas are automatically replaced by the generic path-string schemas.
+const TOOL_SCHEMA_VERSION = 2
 
 function resolveEnvironmentId(): string {
   const smokeState = loadState()
@@ -62,13 +62,15 @@ async function provisionPilotAgent(
         name: SPRINT4A_TOOL_READ_FILE,
         description:
           'Read one permitted file from the sanitized project workspace. ' +
-          'Only allowlisted paths may be requested.',
+          'Only paths authorized by the project contract may be requested. ' +
+          'The broker enforces authorization — the schema validates shape only.',
         input_schema: {
           type: 'object',
           properties: {
             path: {
               type: 'string',
-              enum: PILOT_ALLOWED_READ_PATHS,
+              maxLength: 500,
+              description: 'Relative path to the file (no absolute paths, no .. traversal)',
             },
           },
           required: ['path'],
@@ -79,14 +81,16 @@ async function provisionPilotAgent(
         name: SPRINT4A_TOOL_WRITE_FILE,
         description:
           'Write one permitted file in the disposable project workspace. ' +
-          'Only src/status.js and tests/status.test.js may be written. ' +
-          'Do not include source mutation permission, secret strings, or forbidden markers.',
+          'Only paths in the contract allowedWritePaths may be written. ' +
+          'The broker enforces authorization. Do not write credentials or ' +
+          'content containing POWERPLANT_FORBIDDEN.',
         input_schema: {
           type: 'object',
           properties: {
             path: {
               type: 'string',
-              enum: PILOT_ALLOWED_WRITE_PATHS,
+              maxLength: 500,
+              description: 'Relative path to the file (must be in allowedWritePaths)',
             },
             content: {
               type: 'string',
@@ -100,16 +104,17 @@ async function provisionPilotAgent(
         type: 'custom',
         name: SPRINT4A_TOOL_RUN_CHECK,
         description:
-          'Run the approved verification check inside the isolated executor. ' +
-          'Only the named check ID "test" is permitted. ' +
-          'The broker maps "test" to the fixed action "node --test". ' +
-          'You may not supply a shell command string.',
+          'Run a named verification check inside the isolated executor. ' +
+          'Only check IDs declared in the project VERIFY.yaml are permitted. ' +
+          'You may not supply a shell command string — pass the check ID only. ' +
+          'The broker maps the check ID to its fixed command.',
         input_schema: {
           type: 'object',
           properties: {
             check: {
               type: 'string',
-              enum: PILOT_ALLOWED_CHECK_IDS,
+              maxLength: 100,
+              description: 'Named check ID from the project VERIFY.yaml (e.g. "test")',
             },
           },
           required: ['check'],
@@ -143,18 +148,29 @@ export async function ensureSprint4aAgent(client: Anthropic): Promise<Sprint4aSt
   const environmentId = resolveEnvironmentId()
   const existing = loadSprint4aState()
 
-  if (existing?.agent) {
+  // Re-provision if the agent exists but was created with an older tool schema version.
+  // Schema version 1 used enum arrays; version 2 uses generic strings + broker auth.
+  const existingSchemaVersion = existing?.toolSchemaVersion ?? 1
+  if (existing?.agent && existingSchemaVersion >= TOOL_SCHEMA_VERSION) {
     console.log('[sprint4a] reusing existing agent:', existing.agent.id)
     return existing
   }
 
-  console.log('[sprint4a] provisioning sanitized project pilot agent...')
+  if (existing?.agent) {
+    console.log(
+      `[sprint4a] agent schema version ${existingSchemaVersion} < ${TOOL_SCHEMA_VERSION} — re-provisioning with generic schemas`,
+    )
+  } else {
+    console.log('[sprint4a] provisioning sanitized project pilot agent...')
+  }
+
   const agent = await provisionPilotAgent(client)
   console.log('[sprint4a] agent:', agent.id)
 
   const state: Sprint4aState = {
     environmentId,
     agent,
+    toolSchemaVersion: TOOL_SCHEMA_VERSION,
     createdAt: new Date().toISOString(),
   }
   saveSprint4aState(state)

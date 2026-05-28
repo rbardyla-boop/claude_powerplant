@@ -1,12 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { SPRINT4A_PILOT_CONTRACT } from '../../contracts/project-pilot-contract.js'
-import {
-  PILOT_ALLOWED_READ_PATHS,
-  PILOT_ALLOWED_WRITE_PATHS,
-  PILOT_ALLOWED_CHECK_IDS,
-} from '../../contracts/project-pilot-contract.js'
+import { loadProjectContract } from '../../projects/load-project-contract.js'
 import { previewSanitization } from '../../projects/preview-sanitization.js'
 import { printInspectReport } from '../terminal-output.js'
 import type { InspectionReport } from '../../contracts/inspection-report.js'
@@ -49,7 +44,14 @@ export async function cmdInspect(projectPath: string): Promise<void> {
     process.exit(1)
   }
 
-  const contract = { ...SPRINT4A_PILOT_CONTRACT, sourcePath: absPath }
+  // Load and validate the actual project contract from POLICY.yaml + VERIFY.yaml
+  let contract
+  try {
+    contract = loadProjectContract(absPath)
+  } catch (err) {
+    console.error(`Error: Contract load failed — ${String(err).replace('Error: ', '')}`)
+    process.exit(1)
+  }
 
   let preview
   try {
@@ -74,9 +76,9 @@ export async function cmdInspect(projectPath: string): Promise<void> {
     policy: {
       workspaceMode: contract.workspaceMode,
       realProjectMounted: contract.realProjectMounted,
-      allowedChecks: [...PILOT_ALLOWED_CHECK_IDS],
-      allowedReadPaths: [...PILOT_ALLOWED_READ_PATHS],
-      allowedWritePaths: [...PILOT_ALLOWED_WRITE_PATHS],
+      allowedChecks: Object.keys(contract.allowedChecks),
+      allowedReadPaths: contract.allowedReadPaths,
+      allowedWritePaths: contract.allowedWritePaths,
       forbiddenPaths: contract.excludePaths,
     },
     executorPolicy: {

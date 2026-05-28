@@ -6,6 +6,9 @@ import {
   WriteFileInputSchema,
   RunCheckInputSchema,
   FinalizeInputSchema,
+  isReadPathAuthorized,
+  isWritePathAuthorized,
+  isCheckAuthorized,
 } from '../src/contracts/project-tool-contracts.js'
 
 // These tests exercise the pure validation logic that protects the broker,
@@ -27,7 +30,7 @@ describe('broker write validation', () => {
       path: 'src/status.js',
       content: 'const x = "POWERPLANT_FORBIDDEN_CANARY"',
     })
-    // Schema doesn't check content strings — broker handler does, tested below
+    // Schema doesn't check content strings — broker handler does
     expect(result.success).toBe(true) // schema passes, broker would reject
 
     // Simulate broker content check:
@@ -47,27 +50,59 @@ describe('broker write validation', () => {
   })
 })
 
-describe('broker check validation', () => {
-  it('run check rejects non-"test" check IDs', () => {
-    const badIds = [
-      'bash',
-      'node',
+describe('broker check validation — schema rejects shell command shapes', () => {
+  // RunCheckInputSchema uses regex /^[a-zA-Z][a-zA-Z0-9_-]*$/ to reject
+  // shell-command-shaped strings at the schema level. Valid single-word
+  // identifiers (e.g. "bash", "make") pass the schema but are rejected
+  // by the broker's isCheckAuthorized if not declared in VERIFY.yaml.
+
+  it('schema rejects strings containing spaces (shell command shape)', () => {
+    const shellCommandStrings = [
       'node --test',
-      'sh',
+      'bash -c rm',
+      'sh -c evil',
       'test; rm -rf /',
-      '',
       'npm test',
-      'make',
     ]
-    for (const id of badIds) {
+    for (const id of shellCommandStrings) {
       const result = RunCheckInputSchema.safeParse({ check: id })
       expect(result.success).toBe(false)
+    }
+  })
+
+  it('schema rejects empty check ID', () => {
+    expect(RunCheckInputSchema.safeParse({ check: '' }).success).toBe(false)
+  })
+
+  it('schema accepts valid single-word check IDs (authorization is broker-level)', () => {
+    // These pass the schema; the broker then calls isCheckAuthorized against the contract
+    for (const id of ['test', 'typecheck', 'lint', 'build', 'bash', 'make']) {
+      expect(RunCheckInputSchema.safeParse({ check: id }).success).toBe(true)
     }
   })
 
   it('run check accepts "test"', () => {
     const result = RunCheckInputSchema.safeParse({ check: 'test' })
     expect(result.success).toBe(true)
+  })
+})
+
+describe('broker check authorization — isCheckAuthorized', () => {
+  // Even valid-shaped check IDs are rejected by the broker if not in VERIFY.yaml
+  const CONTRACT_CHECKS = { test: { command: 'node --test' } }
+
+  it('denies "bash" even though schema accepts it', () => {
+    expect(RunCheckInputSchema.safeParse({ check: 'bash' }).success).toBe(true) // schema OK
+    expect(isCheckAuthorized('bash', CONTRACT_CHECKS)).toBe(false) // broker denies
+  })
+
+  it('denies "make" even though schema accepts it', () => {
+    expect(RunCheckInputSchema.safeParse({ check: 'make' }).success).toBe(true)
+    expect(isCheckAuthorized('make', CONTRACT_CHECKS)).toBe(false)
+  })
+
+  it('authorizes declared check "test"', () => {
+    expect(isCheckAuthorized('test', CONTRACT_CHECKS)).toBe(true)
   })
 })
 
@@ -83,9 +118,6 @@ describe('finalize gate', () => {
   })
 
   it('broker state: testCheckPassed starts false — finalize must gate on it', () => {
-    // Simulate the broker state machine invariant:
-    // project_finalize is only allowed when testCheckPassed === true.
-    // This test verifies the gate logic independently of the session loop.
     let testCheckPassed = false
 
     function callFinalize(): string {
@@ -102,48 +134,63 @@ describe('finalize gate', () => {
   })
 })
 
-describe('write path protection', () => {
-  it('broker write handler rejects path outside allowed set', () => {
-    // Simulate the broker-level path check
-    const ALLOWED_WRITE = ['src/status.js', 'tests/status.test.js']
+describe('write path protection — broker authorization', () => {
+  it('broker write handler rejects path outside allowed write paths via isWritePathAuthorized', () => {
+    const allowedWrite = ['src/engine/tests/**']
 
-    function checkWrite(p: string): boolean {
-      return ALLOWED_WRITE.includes(p)
-    }
+    expect(isWritePathAuthorized('.env', allowedWrite)).toBe(false)
+    expect(isWritePathAuthorized('package.json', allowedWrite)).toBe(false)
+    expect(isWritePathAuthorized('src/engine/sim.ts', allowedWrite)).toBe(false)
+    expect(isWritePathAuthorized('src/engine/tests/foo.test.ts', allowedWrite)).toBe(true)
+  })
 
-    expect(checkWrite('.env')).toBe(false)
-    expect(checkWrite('package.json')).toBe(false)
-    expect(checkWrite('deployment/release.txt')).toBe(false)
-    expect(checkWrite('src/status.js')).toBe(true)
-    expect(checkWrite('tests/status.test.js')).toBe(true)
+  it('pilot-shaped write paths are also covered by generic glob authorization', () => {
+    // The pilot's allowedWritePaths are exact filenames, not globs
+    const pilotWrite = ['src/status.js', 'tests/status.test.js']
+    expect(isWritePathAuthorized('src/status.js', pilotWrite)).toBe(true)
+    expect(isWritePathAuthorized('tests/status.test.js', pilotWrite)).toBe(true)
+    expect(isWritePathAuthorized('.env', pilotWrite)).toBe(false)
+    expect(isWritePathAuthorized('package.json', pilotWrite)).toBe(false)
+  })
+})
+
+describe('read path authorization', () => {
+  it('engine source is readable when src/engine/** is in allowedReadPaths', () => {
+    const allowed = ['package.json', 'src/engine/**']
+    expect(isReadPathAuthorized('src/engine/sim.ts', allowed)).toBe(true)
+    expect(isReadPathAuthorized('src/steam/index.ts', allowed)).toBe(false)
+    expect(isReadPathAuthorized('.env', allowed)).toBe(false)
   })
 })
 
 describe('clearance invariants in session summary', () => {
   it('SESSION_SUMMARY clearedForRealProjectMounting is always false', () => {
-    // Simulate what generate-patch-package writes
+    // The clearedForRealProjectMounting field in SESSION_SUMMARY.json must
+    // always be false — enforced by generate-patch-package.
     const summary = {
       clearedForRealProjectMounting: false as const,
-      clearedForSanitizedExternalProjectInput: false as const,
-      clearedForGeneratedExternalPilot: true,
+      // clearedForSanitizedExternalProjectInput is now true for any run that
+      // loaded a valid POLICY.yaml + VERIFY.yaml contract.
+      clearedForSanitizedExternalProjectInput: true,
+      clearedForGeneratedExternalPilot: false,
     }
     expect(summary.clearedForRealProjectMounting).toBe(false)
-    expect(summary.clearedForSanitizedExternalProjectInput).toBe(false)
   })
 
-  it('clearedForGeneratedExternalPilot can only be true when all gates pass', () => {
-    function computeClearance(
+  it('clearedForGeneratedExternalPilot can only be true when all gates pass for the pilot project', () => {
+    function computePilotClearance(
       testPassed: boolean,
       sourceUnmodified: boolean,
       builtinToolCount: number,
+      isGeneratedPilot: boolean,
     ): boolean {
-      return testPassed && sourceUnmodified && builtinToolCount === 0
+      return isGeneratedPilot && testPassed && sourceUnmodified && builtinToolCount === 0
     }
 
-    expect(computeClearance(true, true, 0)).toBe(true)
-    expect(computeClearance(false, true, 0)).toBe(false)
-    expect(computeClearance(true, false, 0)).toBe(false)
-    expect(computeClearance(true, true, 1)).toBe(false)
-    expect(computeClearance(false, false, 0)).toBe(false)
+    expect(computePilotClearance(true, true, 0, true)).toBe(true)
+    expect(computePilotClearance(false, true, 0, true)).toBe(false)
+    expect(computePilotClearance(true, false, 0, true)).toBe(false)
+    expect(computePilotClearance(true, true, 1, true)).toBe(false)
+    expect(computePilotClearance(true, true, 0, false)).toBe(false) // non-pilot
   })
 })

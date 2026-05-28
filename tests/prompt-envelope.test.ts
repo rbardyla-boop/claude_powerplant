@@ -8,7 +8,8 @@ import { verifySourceUnchanged } from '../src/projects/verify-source-unchanged.j
 import { generatePatchPackage } from '../src/projects/generate-patch-package.js'
 import { printReviewReport } from '../src/cli/terminal-output.js'
 import type { PilotVerification } from '../src/contracts/project-tool-contracts.js'
-import type { ProjectContract } from '../src/projects/project-contract.js'
+import type { LoadedProjectContract } from '../src/projects/load-project-contract.js'
+import { loadProjectContract } from '../src/projects/load-project-contract.js'
 import { PROMPT_ENVELOPE_PROTOCOL_VERSION } from '../src/config/constants.js'
 
 const PILOT_SOURCE = '/home/thebackhand/Downloads/grok/powerplant_pilot_status'
@@ -23,20 +24,7 @@ const AGENT_MESSAGE =
   '4. Respond with exactly: SANITIZED PILOT PATCH COMPLETE'
 const MODEL_ID = 'claude-haiku-4-5-20251001'
 
-const pilotContract: ProjectContract = {
-  projectId: 'powerplant-pilot-status',
-  sourcePath: PILOT_SOURCE,
-  includePaths: ['package.json', 'README.md', 'src/**', 'tests/**', '.powerplant/**'],
-  excludePaths: [
-    '.env', '.env.*', 'private/**', 'deployment/**',
-    '.git/**', 'node_modules/**', 'package-lock.json',
-    'credentials*.json', '**/*.key', '**/*.pem',
-  ],
-  denyIfPresentAfterCopy: ['.env', 'private', 'deployment', '.git', 'node_modules', 'credentials.json'],
-  workspaceMode: 'sanitized_copy_only',
-  allowBash: false,
-  realProjectMounted: false,
-}
+let pilotContract: LoadedProjectContract
 
 const mockVerification: PilotVerification = {
   checkId: 'test',
@@ -51,6 +39,7 @@ let patchDir: string
 beforeAll(async () => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-envelope-test-'))
   patchDir = path.join(tempDir, 'patch')
+  pilotContract = loadProjectContract(PILOT_SOURCE)
 
   const runDir = path.join(tempDir, 'run')
   const snapshot = buildPilotSnapshot(pilotContract, runDir)
@@ -59,6 +48,7 @@ beforeAll(async () => {
   await generatePatchPackage({
     runId: 'envelope-test-run-1',
     snapshot,
+    contract: pilotContract,
     sourceVerification,
     verification: mockVerification,
     customToolCounts: { project_run_check: 1, project_finalize: 1 },

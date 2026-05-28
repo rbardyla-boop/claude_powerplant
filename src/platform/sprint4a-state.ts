@@ -12,6 +12,7 @@ const AgentRefSchema = z.object({
 export const Sprint4aStateSchema = z.object({
   environmentId: z.string().min(1),
   agent: AgentRefSchema.optional(),
+  toolSchemaVersion: z.number().int().optional(),
   createdAt: z.string(),
 })
 

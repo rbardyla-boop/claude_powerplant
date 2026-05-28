@@ -4,6 +4,9 @@ import path from 'path'
 import {
   isKnownPilotToolName,
   validateToolInput,
+  isReadPathAuthorized,
+  isWritePathAuthorized,
+  isCheckAuthorized,
 } from '../contracts/project-tool-contracts.js'
 import type {
   PilotToolName,
@@ -14,6 +17,7 @@ import type {
   RunCheckResult,
   FinalizeResult,
 } from '../contracts/project-tool-contracts.js'
+import type { LoadedProjectContract } from '../projects/load-project-contract.js'
 import { runProjectTestExecutor } from './project-executor-actions.js'
 import { generatePatchPackage } from '../projects/generate-patch-package.js'
 import { verifySourceUnchanged } from '../projects/verify-source-unchanged.js'
@@ -43,6 +47,7 @@ export interface ProjectBrokerSessionResult {
 
 interface BrokerState {
   snapshot: PilotSnapshot
+  contract: LoadedProjectContract
   runId: string
   outputDir: string
   patchDir: string
@@ -86,6 +91,15 @@ function handleListFiles(state: BrokerState): string {
 
 function handleReadFile(state: BrokerState, input: unknown): string {
   const { path: relPath } = validateToolInput(SPRINT4A_TOOL_READ_FILE, input) as { path: string }
+
+  // Broker authorization — schema validated shape; now check contract allowedReadPaths
+  if (!isReadPathAuthorized(relPath, state.contract.allowedReadPaths)) {
+    throw new Error(
+      `Read rejected: '${relPath}' is not in the project's allowedReadPaths. ` +
+      `Call project_list_files to see what files are available.`,
+    )
+  }
+
   const absPath = path.join(state.snapshot.workspacePath, relPath)
   if (!fs.existsSync(absPath)) {
     return JSON.stringify({ error: `File not found: ${relPath}` })
@@ -100,6 +114,13 @@ function handleWriteFile(state: BrokerState, input: unknown): string {
     SPRINT4A_TOOL_WRITE_FILE,
     input,
   ) as { path: string; content: string }
+
+  // Broker authorization — check contract allowedWritePaths
+  if (!isWritePathAuthorized(relPath, state.contract.allowedWritePaths)) {
+    throw new Error(
+      `Write rejected: '${relPath}' is not in the project's allowedWritePaths.`,
+    )
+  }
 
   if (content.includes(FORBIDDEN_WRITE_CONTENT_MARKER)) {
     throw new Error(
@@ -117,7 +138,18 @@ function handleWriteFile(state: BrokerState, input: unknown): string {
 
 async function handleRunCheck(state: BrokerState, input: unknown): Promise<string> {
   const { check } = validateToolInput(SPRINT4A_TOOL_RUN_CHECK, input) as { check: string }
-  console.log(`[broker] project_run_check: check=${check}`)
+
+  // Broker authorization — check is allowed only if declared in VERIFY.yaml
+  if (!isCheckAuthorized(check, state.contract.allowedChecks)) {
+    const declared = Object.keys(state.contract.allowedChecks).join(', ')
+    throw new Error(
+      `Check rejected: '${check}' is not declared in VERIFY.yaml. ` +
+      `Declared checks: ${declared}`,
+    )
+  }
+
+  const checkEntry = state.contract.allowedChecks[check]!
+  console.log(`[broker] project_run_check: check=${check} command=${checkEntry.command}`)
 
   const testResult = await runProjectTestExecutor(
     state.snapshot.workspacePath,
@@ -160,7 +192,7 @@ async function handleFinalize(state: BrokerState, input: unknown): Promise<strin
   if (!state.testCheckPassed) {
     throw new Error(
       'project_finalize rejected: test check has not passed. ' +
-      'Call project_run_check with { "check": "test" } and ensure it passes first.',
+      'Call project_run_check with a declared check ID and ensure it passes first.',
     )
   }
   if (state.finalizeReceived) {
@@ -173,6 +205,7 @@ async function handleFinalize(state: BrokerState, input: unknown): Promise<strin
   const pkg = await generatePatchPackage({
     runId: state.runId,
     snapshot: state.snapshot,
+    contract: state.contract,
     sourceVerification,
     verification: state.verification,
     customToolCounts: state.customToolCounts,
@@ -181,6 +214,7 @@ async function handleFinalize(state: BrokerState, input: unknown): Promise<strin
     taskDescription: state.taskDescription,
     agentMessage: state.agentMessage,
     modelId: state.modelId,
+    summary,
   })
 
   state.patchPackage = pkg
@@ -200,6 +234,7 @@ export async function runProjectPilotBrokerSession(opts: {
   agentVersion: number
   environmentId: string
   snapshot: PilotSnapshot
+  contract: LoadedProjectContract
   runId: string
   outputDir: string
   patchDir: string
@@ -213,6 +248,7 @@ export async function runProjectPilotBrokerSession(opts: {
     agentVersion,
     environmentId,
     snapshot,
+    contract,
     runId,
     outputDir,
     patchDir,
@@ -222,6 +258,7 @@ export async function runProjectPilotBrokerSession(opts: {
 
   const state: BrokerState = {
     snapshot,
+    contract,
     runId,
     outputDir,
     patchDir,

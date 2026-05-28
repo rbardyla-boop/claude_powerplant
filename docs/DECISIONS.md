@@ -505,3 +505,58 @@ bind-mount; the broker reads and validates it before returning the result.
 tool broker + air-gapped Docker executor. The clearance invariants (`clearedForRealProjectMounting`,
 `clearedForSanitizedExternalProjectInput`) remain false until project content is introduced in a
 later sprint.
+
+---
+
+## ADR-0021: Generic contract-driven project engine over per-project hardcoding
+
+**Status:** accepted (RC2 dogfood repair)
+
+**Context.** RC1 was validated against a generated pilot project with hardcoded
+allowed paths. The first real-project preflight found that the CLI checked for
+`.powerplant/POLICY.yaml` existence but then ignored its contents — the runtime
+enforced the pilot's paths regardless of what any external project's YAML declared.
+
+**Decision.** All enforcement layers (inspect, run, broker, sanitizer, patch generator)
+now load the operative policy from the project's `.powerplant/POLICY.yaml` and
+`.powerplant/VERIFY.yaml` via `loadProjectContract()`. Tool schemas validate input
+**shape** only (path safety, bounded length, identifier regex). **Authorization**
+(is this specific path/check permitted?) is the broker's responsibility, not the
+schema's. Hard-coded invariants (workspaceMode, realProjectMounted, allowBash) are
+enforced by the loader regardless of what the YAML declares.
+
+**Alternatives considered.**
+
+- Per-project hardcoded constants: rejected — requires code changes for every new
+  project, and silently creates false safety boundaries if a YAML file exists but
+  is not the operative policy.
+- Schema-level enum validation: rejected for runtime authorization — the Managed Agent
+  is provisioned once with a fixed schema; per-project path enums would require
+  re-provisioning a new agent per project. The broker is the right authorization layer.
+
+**Consequences.** Any project can supply its own `.powerplant/` contract without
+requiring Powerplant code changes. The pilot remains supported as one ordinary
+contract-driven project. `toolSchemaVersion = 2` marks the generic schema; old
+agents with version 1 enum schemas are automatically re-provisioned.
+
+---
+
+## ADR-0022: js-yaml as the YAML parser
+
+**Status:** accepted (RC2)
+
+**Context.** The project has no YAML parser. POLICY.yaml and VERIFY.yaml must be
+parsed at runtime to drive all enforcement layers.
+
+**Decision.** Add `js-yaml`. It is the most widely deployed YAML parser in the
+Node.js ecosystem (30M+ weekly downloads), has zero runtime dependencies, ships
+TypeScript type definitions via `@types/js-yaml`, and is actively maintained.
+
+**Alternatives considered.**
+
+- `yaml` (eemeli/yaml): capable and spec-complete, but larger and slower for the
+  simple YAML structures we need.
+- Hand-rolled parser: fragile and unnecessary for a well-structured schema.
+
+**Consequences.** Single added runtime dependency. The loader validates the parsed
+document with explicit TypeScript guards rather than relying on js-yaml's type system.
