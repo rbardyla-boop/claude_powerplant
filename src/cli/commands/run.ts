@@ -101,7 +101,7 @@ export async function cmdRun(
   const apiKey = process.env['ANTHROPIC_API_KEY']
   if (!apiKey) {
     console.error('Error: ANTHROPIC_API_KEY is not set.')
-    console.error('Export it in your shell or ensure .env is loaded before running.')
+    console.error('Set it in your shell or add it to ~/.powerplant/.env')
     process.exit(1)
   }
 
@@ -114,13 +114,17 @@ export async function cmdRun(
   try {
     state = await ensureSprint4aAgent(controlClient)
   } catch (err) {
-    console.error(`Error: Failed to load agent state: ${String(err)}`)
-    console.error('Run the Sprint 1A provisioning step first: npm run smoke:cloud')
+    const msg = String(err).replace('Error: ', '')
+    if (msg.includes('not set up')) {
+      console.error('Error: Powerplant runtime is not set up. Run: powerplant setup')
+    } else {
+      console.error(`Error: Failed to load agent state: ${msg}`)
+    }
     process.exit(1)
   }
 
   if (!state.agent) {
-    console.error('Error: Agent not provisioned. Run: npm run smoke:pilot:project')
+    console.error('Error: Agent not provisioned. Run: powerplant setup')
     process.exit(1)
   }
 

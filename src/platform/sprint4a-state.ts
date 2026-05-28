@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import fs from 'fs'
 import path from 'path'
-import { SPRINT4A_STATE_PATH } from '../config/constants.js'
+import { getPowerplantHome } from '../config/powerplant-home.js'
 
 const AgentRefSchema = z.object({
   id: z.string().min(1),
@@ -19,7 +19,7 @@ export const Sprint4aStateSchema = z.object({
 export type Sprint4aState = z.infer<typeof Sprint4aStateSchema>
 
 function statePath(): string {
-  return path.join(process.cwd(), SPRINT4A_STATE_PATH)
+  return path.join(getPowerplantHome(), 'state', 'sprint4a-pilot.json')
 }
 
 export function loadSprint4aState(): Sprint4aState | null {

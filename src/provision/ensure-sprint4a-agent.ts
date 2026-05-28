@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import fs from 'fs'
 import path from 'path'
+import { fileURLToPath } from 'url'
 import {
   SPRINT4A_AGENT_NAME,
   SPRINT4A_PILOT_MODEL,
@@ -24,15 +25,18 @@ function resolveEnvironmentId(): string {
   const smokeState = loadState()
   if (!smokeState?.environment?.id) {
     throw new Error(
-      'Sprint 1A cloud environment not found. Run npm run smoke:cloud first.',
+      'Powerplant runtime is not set up. Run: powerplant setup',
     )
   }
   return smokeState.environment.id
 }
 
 function readSystemPrompt(): string {
+  // Resolve relative to this source file so it works from any cwd.
+  const __filename = fileURLToPath(import.meta.url)
+  const pkgRoot = path.resolve(path.dirname(__filename), '..', '..', '..')
   return fs.readFileSync(
-    path.join(process.cwd(), 'power/agent/SANITIZED_PROJECT_PILOT_SYSTEM.md'),
+    path.join(pkgRoot, 'power', 'agent', 'SANITIZED_PROJECT_PILOT_SYSTEM.md'),
     'utf-8',
   )
 }

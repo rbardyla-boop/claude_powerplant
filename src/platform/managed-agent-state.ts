@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import fs from 'fs'
 import path from 'path'
-import { SMOKE_STATE_PATH } from '../config/constants.js'
+import { getPowerplantHome } from '../config/powerplant-home.js'
 
 export const AgentResourceSchema = z.object({
   id: z.string().min(1),
@@ -25,7 +25,7 @@ export type EnvironmentResource = z.infer<typeof EnvironmentResourceSchema>
 export type CloudSmokeState = z.infer<typeof CloudSmokeStateSchema>
 
 function statePath(): string {
-  return path.join(process.cwd(), SMOKE_STATE_PATH)
+  return path.join(getPowerplantHome(), 'state', 'cloud-smoke.json')
 }
 
 export function loadState(): CloudSmokeState | null {

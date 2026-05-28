@@ -2,6 +2,63 @@ import type { InspectionReport } from '../contracts/inspection-report.js'
 import type { SanitizationPreview } from '../projects/preview-sanitization.js'
 import type { VerificationReport, CheckResult } from '../contracts/verification-preflight-report.js'
 
+export interface DoctorReportOptions {
+  home: string
+  apiKeyPresent: boolean
+  modelIdPresent: boolean
+  runtimeReady: boolean
+  projectPath: string | null
+  contractPresent: boolean
+  profileId: string | null
+  capsuleAvailable: boolean
+  targetProjectEnvLoaded: boolean
+}
+
+export function printDoctorReport(opts: DoctorReportOptions): void {
+  const yn = (b: boolean): string => (b ? 'YES' : 'NO')
+
+  console.log()
+  console.log('Powerplant Doctor')
+  console.log('─────────────────────────────────────────')
+  console.log(`Powerplant home:      ${opts.home}`)
+  console.log(`Runtime state ready:  ${yn(opts.runtimeReady)}`)
+  console.log()
+  console.log('Environment:')
+  console.log(`  ANTHROPIC_API_KEY configured:         ${yn(opts.apiKeyPresent)}`)
+  console.log(`  CLAUDE_POWERPLANT_MODEL_ID configured: ${yn(opts.modelIdPresent)}`)
+  console.log(`  Target-project .env loaded:           ${yn(opts.targetProjectEnvLoaded)}`)
+
+  if (opts.projectPath !== null) {
+    console.log()
+    console.log('Project:')
+    console.log(`  Path:              ${opts.projectPath}`)
+    console.log(`  Contract present:  ${yn(opts.contractPresent)}`)
+    if (opts.profileId !== null) {
+      console.log(`  Profile:           ${opts.profileId}`)
+      console.log(`  Capsule available: ${yn(opts.capsuleAvailable)}`)
+    } else if (opts.contractPresent) {
+      console.log(`  Profile:           (none declared)`)
+    }
+  }
+
+  console.log()
+  console.log('Next steps:')
+  if (!opts.runtimeReady) {
+    console.log('  Run: powerplant setup')
+  } else if (opts.projectPath !== null && !opts.contractPresent) {
+    console.log('  Add a .powerplant/ contract to your project, then:')
+    console.log('  Run: powerplant inspect <project-path>')
+  } else if (opts.projectPath !== null && opts.profileId !== null && !opts.capsuleAvailable) {
+    console.log('  Build the verification capsule, then:')
+    console.log(`  Run: powerplant verify ${opts.projectPath}`)
+  } else if (opts.projectPath !== null && opts.contractPresent && opts.runtimeReady) {
+    console.log(`  Run: powerplant run ${opts.projectPath} "<task>"`)
+  } else {
+    console.log('  Run: powerplant run <project-path> "<task>"')
+  }
+  console.log()
+}
+
 export function printInspectReport(report: InspectionReport): void {
   console.log()
   console.log(`Project: ${report.projectId}`)
