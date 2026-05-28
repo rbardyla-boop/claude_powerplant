@@ -8,3 +8,22 @@ fixtures/sample-project/dist/
 .powerplant/reports/*.json
 .powerplant/runtime/
 .powerplant/workspaces/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# Coverage
+coverage/
+
+# Editor
+.vscode/settings.json
+.idea/
+
+# Sandbox outputs
+sandbox/output/
