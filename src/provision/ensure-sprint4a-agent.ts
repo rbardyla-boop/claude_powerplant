@@ -148,8 +148,8 @@ async function provisionPilotAgent(
   return { id: created.id, version: Number(created.version), name: created.name }
 }
 
-export async function ensureSprint4aAgent(client: Anthropic): Promise<Sprint4aState> {
-  const environmentId = resolveEnvironmentId()
+export async function ensureSprint4aAgent(client: Anthropic, environmentIdOverride?: string): Promise<Sprint4aState> {
+  const environmentId = environmentIdOverride ?? resolveEnvironmentId()
   const existing = loadSprint4aState()
 
   // Re-provision if the agent exists but was created with an older tool schema version.

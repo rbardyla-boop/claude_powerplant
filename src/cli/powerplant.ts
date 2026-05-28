@@ -14,7 +14,7 @@ loadPowerplantEnv()
 
 function printUsage(): void {
   console.log('Usage:')
-  console.log('  powerplant setup')
+  console.log('  powerplant setup [--repair]')
   console.log('  powerplant inspect <project-path>')
   console.log('  powerplant verify  <project-path>')
   console.log('  powerplant doctor  [project-path]')
@@ -22,7 +22,7 @@ function printUsage(): void {
   console.log('  powerplant review <run-id>')
   console.log()
   console.log('Commands:')
-  console.log('  setup    Provision or migrate runtime resources (run once)')
+  console.log('  setup    Provision or migrate runtime resources; --repair validates via live API')
   console.log('  inspect  Show what Claude would see/modify without starting a session')
   console.log('  verify   Run approved checks in an isolated workspace (no agent, no network)')
   console.log('  doctor   Show runtime status and configuration (no API call)')
@@ -34,7 +34,8 @@ const [, , command, ...rest] = process.argv
 
 switch (command) {
   case 'setup': {
-    await cmdSetup()
+    const repair = rest.includes('--repair')
+    await cmdSetup(repair)
     break
   }
 

@@ -7,6 +7,9 @@ export interface DoctorReportOptions {
   apiKeyPresent: boolean
   modelIdPresent: boolean
   runtimeReady: boolean
+  validationStatus: 'validated' | 'unvalidated' | 'not_configured'
+  credentialSource: 'env' | 'powerplant_env' | 'none'
+  statePurpose: string | null
   projectPath: string | null
   contractPresent: boolean
   profileId: string | null
@@ -22,9 +25,14 @@ export function printDoctorReport(opts: DoctorReportOptions): void {
   console.log('─────────────────────────────────────────')
   console.log(`Powerplant home:      ${opts.home}`)
   console.log(`Runtime state ready:  ${yn(opts.runtimeReady)}`)
+  console.log(`Validation status:    ${opts.validationStatus}`)
+  if (opts.statePurpose !== null) {
+    console.log(`State purpose:        ${opts.statePurpose}`)
+  }
   console.log()
   console.log('Environment:')
   console.log(`  ANTHROPIC_API_KEY configured:         ${yn(opts.apiKeyPresent)}`)
+  console.log(`  Credential source:                    ${opts.credentialSource}`)
   console.log(`  CLAUDE_POWERPLANT_MODEL_ID configured: ${yn(opts.modelIdPresent)}`)
   console.log(`  Target-project .env loaded:           ${yn(opts.targetProjectEnvLoaded)}`)
 

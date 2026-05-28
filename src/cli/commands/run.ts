@@ -8,6 +8,7 @@ import { buildPilotSnapshot } from '../../projects/build-pilot-snapshot.js'
 import { verifySourceUnchanged } from '../../projects/verify-source-unchanged.js'
 import { runProjectPilotBrokerSession } from '../../broker/project-tool-broker.js'
 import { ensureSprint4aAgent } from '../../provision/ensure-sprint4a-agent.js'
+import { loadOperatorState, isStatePlausible } from '../../platform/operator-state.js'
 import { makeRunArtifactDirectory } from '../../runs/find-run.js'
 import { printRunDisclosureSummary, printRunSummary } from '../terminal-output.js'
 
@@ -102,6 +103,13 @@ export async function cmdRun(
   if (!apiKey) {
     console.error('Error: ANTHROPIC_API_KEY is not set.')
     console.error('Set it in your shell or add it to ~/.powerplant/.env')
+    process.exit(1)
+  }
+
+  // Validate operator state before touching API or creating a snapshot
+  const operatorState = loadOperatorState()
+  if (!operatorState || !isStatePlausible(operatorState)) {
+    console.error('Error: Powerplant runtime is not set up. Run: powerplant setup')
     process.exit(1)
   }
 

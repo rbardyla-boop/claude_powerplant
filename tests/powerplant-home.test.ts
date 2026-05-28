@@ -170,6 +170,9 @@ describe('cmdDoctor: never reads target project .env', () => {
         apiKeyPresent: false,
         modelIdPresent: false,
         runtimeReady: false,
+        validationStatus: 'not_configured',
+        credentialSource: 'none',
+        statePurpose: null,
         projectPath: null,
         contractPresent: false,
         profileId: null,
@@ -226,6 +229,8 @@ describe('setup: credential error format never leaks key values', () => {
     const savedHome = process.env[POWERPLANT_HOME_ENV]
     const savedKey = process.env['ANTHROPIC_API_KEY']
 
+    process.env[POWERPLANT_HOME_ENV] = tmpHome
+
     // Write a state that passes runtimeAlreadyReady() so we stay in the "already ready" branch
     fs.mkdirSync(path.join(tmpHome, 'state'), { recursive: true })
     saveSprint4aState({
@@ -234,8 +239,6 @@ describe('setup: credential error format never leaks key values', () => {
       toolSchemaVersion: 2,
       createdAt: new Date().toISOString(),
     })
-
-    process.env[POWERPLANT_HOME_ENV] = tmpHome
 
     // loadState will return null (no cloud-smoke.json) so runtimeAlreadyReady=false
     // but legacy state exists → migration will run successfully (no credentials needed)
