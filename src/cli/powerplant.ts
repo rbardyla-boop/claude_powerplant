@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url'
 import { cmdInspect } from './commands/inspect.js'
 import { cmdRun } from './commands/run.js'
 import { cmdReview } from './commands/review.js'
+import { cmdVerify } from './commands/verify.js'
 
 // Auto-load .env from the package root if ANTHROPIC_API_KEY is not set.
 // This makes the binary work when run from the package directory without
@@ -32,11 +33,13 @@ function loadDotEnv(): void {
 function printUsage(): void {
   console.log('Usage:')
   console.log('  powerplant inspect <project-path>')
+  console.log('  powerplant verify  <project-path>')
   console.log('  powerplant run [--yes] <project-path> "<task>"')
   console.log('  powerplant review <run-id>')
   console.log()
   console.log('Commands:')
   console.log('  inspect  Show what Claude would see/modify without starting a session')
+  console.log('  verify   Run approved checks in an isolated workspace (no agent, no network)')
   console.log('  run      Run a task on a sanitized copy and produce a patch')
   console.log('  review   Display artifacts from a completed run')
 }
@@ -77,6 +80,17 @@ switch (command) {
       process.exit(1)
     }
     await cmdRun(projectPath, task, { yes })
+    break
+  }
+
+  case 'verify': {
+    const projectPath = rest[0]
+    if (!projectPath) {
+      console.error('Error: project-path is required.')
+      printUsage()
+      process.exit(1)
+    }
+    await cmdVerify(projectPath)
     break
   }
 

@@ -1,5 +1,6 @@
 import type { InspectionReport } from '../contracts/inspection-report.js'
 import type { SanitizationPreview } from '../projects/preview-sanitization.js'
+import type { VerificationReport, CheckResult } from '../contracts/verification-preflight-report.js'
 
 export function printInspectReport(report: InspectionReport): void {
   console.log()
@@ -171,6 +172,55 @@ export function printRunSummary(opts: {
     console.log('Run did not fully pass. Review artifacts for details.')
     console.log(`  ${artifactDir}/VERIFICATION_REPORT.md`)
   }
+}
+
+function checkVerdictSuffix(check: CheckResult): string {
+  switch (check.verdict) {
+    case 'BLOCKED_MISSING_TOOLING': {
+      // Try to extract tool name from "X: not found" or "Cannot find module 'X'"
+      const fromNotFound = check.stderrTail.match(/(\w+): (?:command )?not found/i)
+      const fromModule = check.stderrTail.match(/Cannot find module '([\w@][\w@/-]*)'/i)
+      const toolName = fromNotFound?.[1] ?? fromModule?.[1] ?? null
+      return toolName
+        ? ` — ${toolName} unavailable in isolated workspace`
+        : ' — tooling unavailable in isolated workspace'
+    }
+    case 'FAIL_CHECK':
+      return ' — check failed (see report for details)'
+    case 'FAIL_BOUNDARY':
+      return ' — security boundary violation'
+    default:
+      return ''
+  }
+}
+
+export function printVerifyReport(report: VerificationReport, reportPath: string): void {
+  const maxIdLen = Math.max(...report.checks.map(c => c.checkId.length), 4)
+  const pad = maxIdLen + 2
+
+  console.log()
+  console.log(`Project: ${report.projectId}`)
+  console.log(`Contract valid: YES`)
+  console.log(`Sanitization preview: ${report.sanitizationPassed ? 'PASS' : 'FAIL'}`)
+  console.log(`Live agent session started: NO`)
+  console.log()
+  console.log(`Verification workspace: disposable sanitized copy`)
+  console.log(`Original project mounted: NO`)
+  console.log(`Executor network: disabled`)
+  console.log()
+  console.log('Approved checks:')
+  if (report.checks.length === 0) {
+    console.log('  (none declared)')
+  } else {
+    for (const check of report.checks) {
+      console.log(`  ${check.checkId.padEnd(pad)}${check.verdict}${checkVerdictSuffix(check)}`)
+    }
+  }
+  console.log()
+  console.log(`Source project modified: ${report.sourceProjectModified ? 'YES (ERROR)' : 'NO'}`)
+  console.log(`Verdict: ${report.verdict}`)
+  console.log(`Report: ${reportPath}`)
+  console.log()
 }
 
 export function printReviewReport(opts: {

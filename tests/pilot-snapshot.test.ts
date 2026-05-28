@@ -154,19 +154,37 @@ describe('pilot-snapshot', () => {
     }
   })
 
-  it('rejects a source with a symlink', () => {
+  it('rejects a symlink that is inside an included path', () => {
+    // A symlink that WOULD be copied into the snapshot must be rejected.
+    // (sym.ts is inside src/** which is in includePaths.)
     const runDir = path.join(tempDir, 'symlink-test')
-    const fakeSourceDir = path.join(tempDir, 'fake-source')
-    fs.mkdirSync(fakeSourceDir, { recursive: true })
+    const fakeSourceDir = path.join(tempDir, 'fake-source-included')
+    fs.mkdirSync(path.join(fakeSourceDir, 'src'), { recursive: true })
     fs.writeFileSync(path.join(fakeSourceDir, 'package.json'), '{}')
-    const symlinkPath = path.join(fakeSourceDir, 'sym.link')
-    fs.symlinkSync('/etc/passwd', symlinkPath)
+    fs.symlinkSync('/etc/passwd', path.join(fakeSourceDir, 'src', 'evil.ts'))
 
     const fakeContract: ProjectContract = {
       ...pilotContract,
       sourcePath: fakeSourceDir,
     }
     expect(() => buildPilotSnapshot(fakeContract, runDir)).toThrow(/Symlink rejected/)
+  })
+
+  it('skips a symlink in an excluded path (e.g. node_modules/.bin/)', () => {
+    // Real projects contain symlinks in node_modules/.bin/. These are never
+    // in includePaths so they must not cause a rejection.
+    const runDir = path.join(tempDir, 'symlink-excluded-test')
+    const fakeSourceDir = path.join(tempDir, 'fake-source-excluded')
+    fs.mkdirSync(path.join(fakeSourceDir, 'node_modules', '.bin'), { recursive: true })
+    fs.writeFileSync(path.join(fakeSourceDir, 'package.json'), '{}')
+    fs.symlinkSync('/usr/bin/node', path.join(fakeSourceDir, 'node_modules', '.bin', 'vitest'))
+
+    const fakeContract: ProjectContract = {
+      ...pilotContract,
+      sourcePath: fakeSourceDir,
+    }
+    // node_modules/.bin/vitest is NOT in includePaths → must not throw
+    expect(() => buildPilotSnapshot(fakeContract, runDir)).not.toThrow()
   })
 
   it('verifySourceUnchanged returns sourceUnmodified: true when source is untouched', () => {

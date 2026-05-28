@@ -63,15 +63,22 @@ function sha256ofFile(filePath: string): string {
   return crypto.createHash('sha256').update(content).digest('hex')
 }
 
-function walkDir(dir: string, base: string, results: string[]): void {
+function walkDir(dir: string, base: string, includePaths: string[], results: string[]): void {
   for (const entry of fs.readdirSync(dir)) {
     const fullPath = path.join(dir, entry)
+    const relPath = path.relative(base, fullPath).replace(/\\/g, '/')
     const stat = fs.lstatSync(fullPath)
     if (stat.isSymbolicLink()) {
-      throw new Error(`Symlink rejected: ${path.relative(base, fullPath)}`)
+      // Only reject symlinks that would enter the sanitized snapshot.
+      // Symlinks inside excluded directories (e.g. node_modules/.bin/) are skipped.
+      const wouldInclude = includePaths.some(p => matchesGlob(relPath, p))
+      if (wouldInclude) {
+        throw new Error(`Symlink rejected: ${relPath}`)
+      }
+      continue
     }
     if (stat.isDirectory()) {
-      walkDir(fullPath, base, results)
+      walkDir(fullPath, base, includePaths, results)
     } else {
       results.push(fullPath)
     }
@@ -104,7 +111,7 @@ export function buildSanitizedWorkspace(
 
   // Collect all files in the source directory
   const allFiles: string[] = []
-  walkDir(sourcePath, sourcePath, allFiles)
+  walkDir(sourcePath, sourcePath, contract.includePaths, allFiles)
 
   // Copy only files matching includePaths
   const copiedFiles: WorkspaceFile[] = []
@@ -112,10 +119,11 @@ export function buildSanitizedWorkspace(
   for (const fullPath of allFiles) {
     const relativePath = path.relative(sourcePath, fullPath).replace(/\\/g, '/')
 
-    assertSafePath(relativePath, sourcePath)
-
     const included = contract.includePaths.some(p => matchesGlob(relativePath, p))
     if (!included) continue
+
+    // Safety checks only run for files that will actually enter the snapshot.
+    assertSafePath(relativePath, sourcePath)
 
     const destPath = path.join(outputPath, relativePath)
     fs.mkdirSync(path.dirname(destPath), { recursive: true })
