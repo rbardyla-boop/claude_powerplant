@@ -13,6 +13,7 @@ type AuditPayload =
   | WithoutInfra<Extract<SkillAuditEvent, { event: 'promoted' }>>
   | WithoutInfra<Extract<SkillAuditEvent, { event: 'rolled-back' }>>
   | WithoutInfra<Extract<SkillAuditEvent, { event: 'quarantined' }>>
+  | WithoutInfra<Extract<SkillAuditEvent, { event: 'disabled' }>>
 
 export function appendAuditEvent(payload: AuditPayload): SkillAuditEvent {
   // Spread is safe here: payload is a variant of AuditPayload which is a

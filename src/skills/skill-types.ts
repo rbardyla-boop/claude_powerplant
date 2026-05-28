@@ -22,7 +22,7 @@ export const SkillManifestSchema = z.object({
   sha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   evaluationPassed: z.boolean(),
   evaluationAt: z.string().datetime().nullable(),
-})
+}).strict() // Reject unknown fields — prevents executable/shell-command/network fields
 
 export type SkillManifest = z.infer<typeof SkillManifestSchema>
 
@@ -117,6 +117,15 @@ export const SkillAuditEventSchema = z.discriminatedUnion('event', [
     name: z.string(),
     reason: z.string(),
     contentHash: z.string().nullable(),
+  }),
+
+  // Active skill version disabled by operator action.
+  baseEvent.extend({
+    event: z.literal('disabled'),
+    name: z.string(),
+    version: z.number().int().positive(),
+    candidateId: z.string().uuid(),
+    contentHash: z.string(),
   }),
 ])
 

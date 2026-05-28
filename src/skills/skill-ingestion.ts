@@ -29,12 +29,31 @@ export const DEFAULT_GATE0_LIMITS: Gate0Limits = {
 
 // ── Internal types ────────────────────────────────────────────────────────────
 
-// Exported for deterministic TOCTOU testing only — not part of the public skill API.
+// ── Gate 0 copy hooks (test injection only) ───────────────────────────────────
+
+/**
+ * Hooks for deterministic adversarial testing. Never populated in production.
+ *
+ * beforeOpen — called after lstat validation, before opening the source handle.
+ *              Use to simulate path substitution at the open boundary.
+ * afterWrite  — called after writing content to destination, before post-copy fstat.
+ *              Use to simulate source mutation during the copy window.
+ */
+export interface Gate0CopyHooks {
+  beforeOpen?: (entry: ValidatedFileEntry) => void
+  afterWrite?: (entry: ValidatedFileEntry) => void
+}
+
+// ── ValidatedFileEntry ────────────────────────────────────────────────────────
+// Exported so tests can craft entries with injected identity fields.
+
 export interface ValidatedFileEntry {
   relativePath: string
   absolutePath: string
   sizeBytes: number
   mtimeMs: number
+  ino: number    // inode — used for identity check after open
+  dev: number    // device — used to detect cross-device replacement
 }
 
 interface Gate0Rejection {
@@ -172,6 +191,8 @@ async function walkSourceDirectory(
         absolutePath: entryPath,
         sizeBytes: stat.size,
         mtimeMs: stat.mtimeMs,
+        ino: stat.ino,
+        dev: stat.dev,
       })
     }
 
@@ -183,42 +204,155 @@ async function walkSourceDirectory(
   return { kind: 'GATE_0_ACCEPTANCE', files }
 }
 
-// ── Snapshot copy ─────────────────────────────────────────────────────────────
-// Exported so deterministic TOCTOU tests can pass a crafted ValidatedFileEntry
-// with a mismatched mtimeMs without requiring filesystem timing tricks.
+// ── Snapshot copy — handle-based with pre/post fstat ─────────────────────────
+//
+// Platform note: O_NOFOLLOW is available on Linux and macOS (fs.constants.O_NOFOLLOW).
+// It prevents open() from following the final path component if it is a symlink,
+// returning ELOOP instead. On platforms where O_NOFOLLOW is unavailable (Windows),
+// the open succeeds and symlink substitution is caught only by the post-open fstat
+// inode/type check — a weaker but still present guard.
+//
+// Intermediate-directory substitution (an attacker replacing a parent directory
+// during the walk-to-open window) is not portably preventable at the Node.js level
+// without OS-specific mechanisms. Phase 1A treats this as a residual risk: skill
+// imports should be performed by the operator, not by untrusted concurrent processes,
+// and the quarantine snapshot is in Powerplant-controlled storage (0o700).
+//
+// Exported so tests can call it directly with crafted ValidatedFileEntry values and
+// injected hooks — no timing-dependent sleeps needed.
+
+// True on Linux/macOS; false on Windows and any platform without O_NOFOLLOW.
+const NO_FOLLOW_OPEN_SUPPORTED =
+  'O_NOFOLLOW' in fs.constants && (fs.constants.O_NOFOLLOW as number) !== 0
+
+async function copyFileSecure(
+  entry: ValidatedFileEntry,
+  destDir: string,
+  hooks?: Gate0CopyHooks
+): Promise<{ success: false; reason: string } | { success: true }> {
+  const destPath = path.join(destDir, entry.relativePath)
+
+  // Test hook: simulate path substitution just before open.
+  hooks?.beforeOpen?.(entry)
+
+  // Open source with O_NOFOLLOW where supported. On Linux/macOS this causes
+  // open() to fail with ELOOP if the final path component is a symlink.
+  const openFlags =
+    fs.constants.O_RDONLY |
+    (NO_FOLLOW_OPEN_SUPPORTED ? (fs.constants.O_NOFOLLOW as number) : 0)
+
+  let srcHandle: fs.promises.FileHandle
+  try {
+    srcHandle = await fs.promises.open(entry.absolutePath, openFlags)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'ELOOP') {
+      return { success: false, reason: `Source entry is or became a symlink: ${entry.relativePath}` }
+    }
+    if (code === 'ENOENT') {
+      return { success: false, reason: `Source entry disappeared before open: ${entry.relativePath}` }
+    }
+    return { success: false, reason: `Cannot open source entry: ${entry.relativePath} (${code ?? 'unknown'})` }
+  }
+
+  try {
+    // fstat on the opened handle — calls fstat(2), not stat(2).
+    // Works on the actual open file object, not the path. Immune to path substitution.
+    const preStat = await srcHandle.stat()
+
+    if (!preStat.isFile()) {
+      return { success: false, reason: `Source entry is not a regular file after opening: ${entry.relativePath}` }
+    }
+
+    // Inode + device: detects replacement with a different file at the same path.
+    if (preStat.ino !== entry.ino || preStat.dev !== entry.dev) {
+      return {
+        success: false,
+        reason: `Source entry replaced (inode/device changed): ${entry.relativePath}`,
+      }
+    }
+
+    if (preStat.nlink > 1) {
+      return {
+        success: false,
+        reason: `Source entry has multiple hardlinks after opening: ${entry.relativePath} (nlink=${preStat.nlink})`,
+      }
+    }
+
+    if (preStat.mtimeMs !== entry.mtimeMs) {
+      return { success: false, reason: `Source entry modified during ingestion: ${entry.relativePath}` }
+    }
+
+    // Snapshot pre-copy identity for post-copy verification.
+    const preSize = preStat.size
+    const preMtime = preStat.mtimeMs
+    const preCtime = preStat.ctimeMs   // best-effort; ctime semantics vary by filesystem
+
+    // Create dest directory and open the destination exclusively.
+    // O_CREAT | O_EXCL: fails with EEXIST if the path already exists.
+    await fs.promises.mkdir(path.dirname(destPath), { recursive: true })
+    let destHandle: fs.promises.FileHandle
+    try {
+      destHandle = await fs.promises.open(
+        destPath,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
+      )
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code === 'EEXIST') {
+        return { success: false, reason: `Snapshot destination already exists: ${entry.relativePath}` }
+      }
+      throw err
+    }
+
+    let copyError: { success: false; reason: string } | null = null
+    try {
+      const content = await srcHandle.readFile()
+      await destHandle.writeFile(content)
+      await destHandle.sync()
+    } catch (err) {
+      copyError = { success: false, reason: `Failed to copy file: ${entry.relativePath}: ${(err as Error).message}` }
+    } finally {
+      try { await destHandle.close() } catch { /* ignore */ }
+    }
+
+    if (copyError) {
+      try { await fs.promises.unlink(destPath) } catch { /* best-effort cleanup */ }
+      return copyError
+    }
+
+    // Test hook: simulate source mutation during the post-write window.
+    hooks?.afterWrite?.(entry)
+
+    // Post-copy fstat: source identity must be unchanged since we read it.
+    // Checks size, mtime, and ctime (ctime best-effort on FAT/network FS).
+    const postStat = await srcHandle.stat()
+    const identityChanged =
+      postStat.size !== preSize ||
+      postStat.mtimeMs !== preMtime ||
+      postStat.ctimeMs !== preCtime
+
+    if (identityChanged) {
+      try { await fs.promises.unlink(destPath) } catch { /* best-effort */ }
+      return { success: false, reason: `Source entry changed during copying: ${entry.relativePath}` }
+    }
+
+  } finally {
+    try { await srcHandle.close() } catch { /* ignore */ }
+  }
+
+  return { success: true }
+}
 
 export async function copyToSnapshot(
   files: ValidatedFileEntry[],
-  destDir: string
+  destDir: string,
+  hooks?: Gate0CopyHooks
 ): Promise<{ success: false; reason: string } | { success: true }> {
   for (const file of files) {
-    // Re-stat before copying: detect TOCTOU mutation in the source.
-    let stat: fs.Stats
-    try {
-      stat = await fs.promises.lstat(file.absolutePath)
-    } catch {
-      return { success: false, reason: `Source entry disappeared during ingestion: ${file.relativePath}` }
-    }
-
-    if (!stat.isFile() || stat.isSymbolicLink()) {
-      return {
-        success: false,
-        reason: `Source entry changed type during ingestion: ${file.relativePath}`,
-      }
-    }
-
-    if (stat.mtimeMs !== file.mtimeMs) {
-      return {
-        success: false,
-        reason: `Source entry modified during ingestion: ${file.relativePath}`,
-      }
-    }
-
-    const destPath = path.join(destDir, file.relativePath)
-    await fs.promises.mkdir(path.dirname(destPath), { recursive: true })
-    await fs.promises.copyFile(file.absolutePath, destPath)
+    const result = await copyFileSecure(file, destDir, hooks)
+    if (!result.success) return result
   }
-
   return { success: true }
 }
 

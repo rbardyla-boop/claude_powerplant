@@ -8,6 +8,7 @@ import {
   DEFAULT_GATE0_LIMITS,
   type IngestionSuccess,
   type ValidatedFileEntry,
+  type Gate0CopyHooks,
 } from '../src/skills/skill-ingestion.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -484,35 +485,46 @@ describe('Gate 0: reserved .powerplant-meta.json filename', () => {
   })
 })
 
-// ── Copy-time TOCTOU protection — deterministic test ─────────────────────────
-// Tests copyToSnapshot directly with a crafted ValidatedFileEntry whose
-// recorded mtimeMs differs from the actual file — no filesystem timing needed.
+// ── Helpers for adversarial copy tests ───────────────────────────────────────
 
-describe('copyToSnapshot: deterministic TOCTOU mtime protection', () => {
+function makeValidatedEntry(filePath: string): ValidatedFileEntry {
+  const stat = fs.lstatSync(filePath)
+  return {
+    relativePath: path.basename(filePath),
+    absolutePath: filePath,
+    sizeBytes: stat.size,
+    mtimeMs: stat.mtimeMs,
+    ino: stat.ino,
+    dev: stat.dev,
+  }
+}
+
+// ── Adversarial copy tests — deterministic, no sleeps ────────────────────────
+// These tests exercise handle-based copyToSnapshot using injected hooks
+// and crafted ValidatedFileEntry values. No filesystem timing is needed.
+
+describe('copyToSnapshot: pre-open mtime mismatch (stale validation)', () => {
   test('rejects a file whose recorded mtimeMs does not match the real file mtime', async () => {
     const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toctou-src-'))
     const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toctou-dest-'))
     try {
       const filePath = path.join(srcDir, 'file.txt')
       fs.writeFileSync(filePath, 'content')
-      const actualStat = fs.lstatSync(filePath)
+      const stat = fs.lstatSync(filePath)
 
-      // Craft an entry whose recorded mtime is in the future — simulates the
-      // race condition where a file is modified between walk and copy.
       const entries: ValidatedFileEntry[] = [{
         relativePath: 'file.txt',
         absolutePath: filePath,
-        sizeBytes: actualStat.size,
-        mtimeMs: actualStat.mtimeMs + 9999,
+        sizeBytes: stat.size,
+        mtimeMs: stat.mtimeMs + 9999,  // deliberately stale
+        ino: stat.ino,
+        dev: stat.dev,
       }]
 
       const result = await copyToSnapshot(entries, destDir)
 
       expect(result.success).toBe(false)
-      if (!result.success) {
-        expect(result.reason).toMatch(/modified during ingestion/i)
-      }
-      // No file was copied to the destination
+      if (!result.success) expect(result.reason).toMatch(/modified during ingestion/i)
       expect(fs.readdirSync(destDir)).toHaveLength(0)
     } finally {
       fs.rmSync(srcDir, { recursive: true, force: true })
@@ -520,26 +532,142 @@ describe('copyToSnapshot: deterministic TOCTOU mtime protection', () => {
     }
   })
 
-  test('accepts a file whose mtimeMs matches exactly', async () => {
+  test('accepts a file whose identity matches exactly', async () => {
     const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toctou-ok-src-'))
     const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toctou-ok-dest-'))
     try {
       const filePath = path.join(srcDir, 'file.txt')
       fs.writeFileSync(filePath, 'content')
-      const actualStat = fs.lstatSync(filePath)
 
-      const entries: ValidatedFileEntry[] = [{
-        relativePath: 'file.txt',
-        absolutePath: filePath,
-        sizeBytes: actualStat.size,
-        mtimeMs: actualStat.mtimeMs,
-      }]
-
-      const result = await copyToSnapshot(entries, destDir)
+      const result = await copyToSnapshot([makeValidatedEntry(filePath)], destDir)
 
       expect(result.success).toBe(true)
       expect(fs.existsSync(path.join(destDir, 'file.txt'))).toBe(true)
       expect(fs.readFileSync(path.join(destDir, 'file.txt'), 'utf-8')).toBe('content')
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true })
+      fs.rmSync(destDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('copyToSnapshot: post-open inode identity check', () => {
+  test('rejects a file whose recorded inode differs from the opened file', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inode-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inode-dest-'))
+    try {
+      const filePath = path.join(srcDir, 'file.txt')
+      fs.writeFileSync(filePath, 'content')
+      const stat = fs.lstatSync(filePath)
+
+      // Supply a wrong inode — simulates detecting that a different file was
+      // substituted at the same path after the walk recorded the original inode.
+      const entries: ValidatedFileEntry[] = [{
+        relativePath: 'file.txt',
+        absolutePath: filePath,
+        sizeBytes: stat.size,
+        mtimeMs: stat.mtimeMs,
+        ino: stat.ino + 999999,  // deliberate mismatch
+        dev: stat.dev,
+      }]
+
+      const result = await copyToSnapshot(entries, destDir)
+
+      expect(result.success).toBe(false)
+      if (!result.success) expect(result.reason).toMatch(/replaced.*inode/i)
+      expect(fs.readdirSync(destDir)).toHaveLength(0)
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true })
+      fs.rmSync(destDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('copyToSnapshot: beforeOpen hook — symlink substitution', () => {
+  test('rejects entry substituted with a symlink before open (O_NOFOLLOW path)', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'subst-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'subst-dest-'))
+    try {
+      const filePath = path.join(srcDir, 'file.txt')
+      fs.writeFileSync(filePath, 'content')
+
+      const entry = makeValidatedEntry(filePath)
+
+      const hooks: Gate0CopyHooks = {
+        beforeOpen: () => {
+          // Replace the file with a symlink — simulates substitution after walk
+          // but before open
+          fs.unlinkSync(filePath)
+          fs.symlinkSync('/etc/hostname', filePath)
+        },
+      }
+
+      const result = await copyToSnapshot([entry], destDir, hooks)
+
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        // O_NOFOLLOW causes ELOOP, or inode mismatch catches a regular-file replacement
+        expect(result.reason).toMatch(/symlink|replaced|inode/i)
+      }
+      expect(fs.readdirSync(destDir)).toHaveLength(0)
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true })
+      fs.rmSync(destDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('copyToSnapshot: afterWrite hook — source mutation during copy window', () => {
+  test('rejects import when source is mutated after writing to destination', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutate-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutate-dest-'))
+    try {
+      const filePath = path.join(srcDir, 'file.txt')
+      fs.writeFileSync(filePath, 'original-content')
+
+      const entry = makeValidatedEntry(filePath)
+
+      const hooks: Gate0CopyHooks = {
+        afterWrite: () => {
+          // Append bytes to source after copy but before post-copy fstat —
+          // changes both size and mtime deterministically
+          fs.appendFileSync(filePath, '-TAMPERED-DURING-COPY')
+        },
+      }
+
+      const result = await copyToSnapshot([entry], destDir, hooks)
+
+      expect(result.success).toBe(false)
+      if (!result.success) expect(result.reason).toMatch(/changed during copying/i)
+
+      // Destination file must be removed (quarantined/unlinked)
+      expect(fs.readdirSync(destDir)).toHaveLength(0)
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true })
+      fs.rmSync(destDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('copyToSnapshot: exclusive destination creation', () => {
+  test('fails closed when destination file unexpectedly already exists', async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'excl-src-'))
+    const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'excl-dest-'))
+    try {
+      const filePath = path.join(srcDir, 'file.txt')
+      fs.writeFileSync(filePath, 'original')
+      const entry = makeValidatedEntry(filePath)
+
+      // Pre-create the destination to simulate an unexpected collision
+      fs.writeFileSync(path.join(destDir, 'file.txt'), 'existing-content')
+
+      const result = await copyToSnapshot([entry], destDir)
+
+      expect(result.success).toBe(false)
+      if (!result.success) expect(result.reason).toMatch(/destination already exists/i)
+
+      // Existing file must be untouched
+      expect(fs.readFileSync(path.join(destDir, 'file.txt'), 'utf-8')).toBe('existing-content')
     } finally {
       fs.rmSync(srcDir, { recursive: true, force: true })
       fs.rmSync(destDir, { recursive: true, force: true })
