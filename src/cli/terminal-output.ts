@@ -206,7 +206,21 @@ export function printVerifyReport(report: VerificationReport, reportPath: string
   console.log()
   console.log(`Verification workspace: disposable sanitized copy`)
   console.log(`Original project mounted: NO`)
+  console.log(`Project node_modules mounted: NO`)
   console.log(`Executor network: disabled`)
+  console.log(`Credentials passed: NO`)
+
+  if (report.verificationProfileId !== null) {
+    console.log()
+    console.log(`Verification profile: ${report.verificationProfileId}`)
+    if (report.capsuleToolchainVersions !== null) {
+      console.log('Capsule toolchain:')
+      for (const [pkg, ver] of Object.entries(report.capsuleToolchainVersions)) {
+        console.log(`  ${pkg} ${ver}`)
+      }
+    }
+  }
+
   console.log()
   console.log('Approved checks:')
   if (report.checks.length === 0) {

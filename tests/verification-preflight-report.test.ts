@@ -22,8 +22,14 @@ const BASE_REPORT = {
   sanitizationPassed: true,
   workspaceMode: 'sanitized_copy_only' as const,
   originalProjectMounted: false as const,
+  projectNodeModulesMounted: false as const,
+  credentialsPassedToExecutor: false as const,
+  agentVisibleNodeModules: false as const,
   liveAgentSession: false as const,
   executorNetwork: 'disabled' as const,
+  verificationProfileId: null,
+  capsuleImageId: null,
+  capsuleToolchainVersions: null,
   checks: [BASE_CHECK],
   verdict: 'PASS' as const,
   sourceProjectModified: false,
@@ -160,6 +166,62 @@ describe('CheckResultSchema', () => {
 })
 
 // ── CheckVerdictSchema ────────────────────────────────────────────────────────
+
+// ── VerificationReportSchema: new security invariant fields ───────────────────
+
+describe('VerificationReportSchema: new boundary fields', () => {
+  it('requires projectNodeModulesMounted to be false', () => {
+    expect(VerificationReportSchema.safeParse({
+      ...BASE_REPORT, projectNodeModulesMounted: true,
+    }).success).toBe(false)
+  })
+
+  it('requires credentialsPassedToExecutor to be false', () => {
+    expect(VerificationReportSchema.safeParse({
+      ...BASE_REPORT, credentialsPassedToExecutor: true,
+    }).success).toBe(false)
+  })
+
+  it('requires agentVisibleNodeModules to be false', () => {
+    expect(VerificationReportSchema.safeParse({
+      ...BASE_REPORT, agentVisibleNodeModules: true,
+    }).success).toBe(false)
+  })
+
+  it('accepts verificationProfileId as null (no capsule)', () => {
+    expect(VerificationReportSchema.safeParse({
+      ...BASE_REPORT, verificationProfileId: null, capsuleImageId: null, capsuleToolchainVersions: null,
+    }).success).toBe(true)
+  })
+
+  it('accepts verificationProfileId as a string (capsule declared)', () => {
+    expect(VerificationReportSchema.safeParse({
+      ...BASE_REPORT,
+      verificationProfileId: 'node-vitest-typescript-v1',
+      capsuleImageId: 'powerplant-verifier:node-vitest-typescript-v1',
+      capsuleToolchainVersions: { vitest: '2.1.9', typescript: '5.9.3' },
+    }).success).toBe(true)
+  })
+})
+
+// ── Capsule metadata in report ─────────────────────────────────────────────────
+
+describe('VerificationReportSchema: capsule metadata', () => {
+  it('report with capsule info parses correctly', () => {
+    const withCapsule = {
+      ...BASE_REPORT,
+      verificationProfileId: 'node-vitest-typescript-v1',
+      capsuleImageId: 'powerplant-verifier:node-vitest-typescript-v1',
+      capsuleToolchainVersions: { vitest: '2.1.9', vite: '5.4.21', typescript: '5.9.3' },
+    }
+    const result = VerificationReportSchema.safeParse(withCapsule)
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.verificationProfileId).toBe('node-vitest-typescript-v1')
+      expect(result.data.capsuleToolchainVersions?.['vitest']).toBe('2.1.9')
+    }
+  })
+})
 
 describe('CheckVerdictSchema', () => {
   it('accepts all four defined verdicts', () => {

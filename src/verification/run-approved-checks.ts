@@ -1,6 +1,8 @@
 import { spawnSync } from 'child_process'
 import type { CheckResult } from '../contracts/verification-preflight-report.js'
 import { classifyCheckResult, tailOutput } from './classify-check-result.js'
+import { resolveVerificationProfile } from './verification-profiles.js'
+import { runCapsuleChecks } from './run-capsule-checks.js'
 
 const CHECK_TIMEOUT_MS = 120_000
 
@@ -78,4 +80,26 @@ export function runApprovedChecks(
   }
 
   return results
+}
+
+/**
+ * Shared entry point used by both `powerplant verify` and the live
+ * `project_run_check` broker handler.
+ *
+ * When verificationProfileId is provided, runs checks inside the named
+ * capsule image (Docker, --network none). Without a profile, falls back
+ * to plain host-process execution (useful for simple projects and tests).
+ *
+ * Both paths must always route here — never diverge between preflight and live.
+ */
+export async function executeChecksWithProfile(
+  workspacePath: string,
+  checks: Record<string, { command: string }>,
+  verificationProfileId: string | null,
+): Promise<CheckResult[]> {
+  if (verificationProfileId !== null) {
+    const profile = resolveVerificationProfile(verificationProfileId)
+    return runCapsuleChecks(workspacePath, checks, profile)
+  }
+  return runApprovedChecks(workspacePath, checks)
 }

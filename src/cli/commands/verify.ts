@@ -7,7 +7,8 @@ import {
   createVerificationWorkspace,
   checkSourceModified,
 } from '../../verification/create-verification-workspace.js'
-import { runApprovedChecks } from '../../verification/run-approved-checks.js'
+import { executeChecksWithProfile } from '../../verification/run-approved-checks.js'
+import { resolveVerificationProfile } from '../../verification/verification-profiles.js'
 import { printVerifyReport } from '../terminal-output.js'
 import type {
   VerificationReport,
@@ -70,6 +71,17 @@ export async function cmdVerify(projectPath: string): Promise<void> {
     process.exit(1)
   }
 
+  // 2b. Resolve verification profile early to fail fast on unknown profile IDs.
+  const profileId = contract.verificationProfile
+  if (profileId !== null) {
+    try {
+      resolveVerificationProfile(profileId)
+    } catch (err) {
+      console.error(`Error: ${String(err).replace('Error: ', '')}`)
+      process.exit(1)
+    }
+  }
+
   // 3. Sanitization preview — refuse if snapshot would contain forbidden content.
   let preview
   try {
@@ -96,12 +108,16 @@ export async function cmdVerify(projectPath: string): Promise<void> {
     process.exit(1)
   }
 
-  // 5–8. Execute approved checks and record results.
+  // 5–8. Execute approved checks via shared routing (capsule or plain).
   let checkResults: CheckResult[] = []
   try {
-    checkResults = runApprovedChecks(workspace.workspacePath, contract.allowedChecks)
+    checkResults = await executeChecksWithProfile(
+      workspace.workspacePath,
+      contract.allowedChecks,
+      profileId,
+    )
   } finally {
-    // 4b. Workspace is always cleaned up — disposable by contract.
+    // Workspace is always cleaned up — disposable by contract.
     workspace.cleanup()
   }
 
@@ -109,6 +125,9 @@ export async function cmdVerify(projectPath: string): Promise<void> {
   const sourceProjectModified = checkSourceModified(workspace.sourceManifest)
 
   const verdict = deriveOverallVerdict(checkResults)
+
+  // Resolve profile metadata for the report (null when no profile declared).
+  const resolvedProfile = profileId !== null ? resolveVerificationProfile(profileId) : null
 
   const report: VerificationReport = {
     verifiedAt: new Date().toISOString(),
@@ -118,8 +137,14 @@ export async function cmdVerify(projectPath: string): Promise<void> {
     sanitizationPassed: preview.allForbiddenAbsent,
     workspaceMode: 'sanitized_copy_only',
     originalProjectMounted: false,
+    projectNodeModulesMounted: false,
+    credentialsPassedToExecutor: false,
+    agentVisibleNodeModules: false,
     liveAgentSession: false,
     executorNetwork: 'disabled',
+    verificationProfileId: profileId,
+    capsuleImageId: resolvedProfile?.capsuleImageName ?? null,
+    capsuleToolchainVersions: resolvedProfile?.toolchainPackageVersions ?? null,
     checks: checkResults,
     verdict,
     sourceProjectModified,

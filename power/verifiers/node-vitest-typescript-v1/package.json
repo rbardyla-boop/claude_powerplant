@@ -1,0 +1,11 @@
+{
+  "name": "powerplant-verifier-node-vitest-typescript-v1",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned offline QA toolchain for the node-vitest-typescript-v1 verification profile",
+  "dependencies": {
+    "vitest": "2.1.9",
+    "vite": "5.4.21",
+    "typescript": "5.9.3"
+  }
+}

@@ -9,6 +9,8 @@ import {
 } from '../config/constants.js'
 import { PilotVerificationSchema } from '../contracts/project-tool-contracts.js'
 import type { PilotVerification } from '../contracts/project-tool-contracts.js'
+import { executeChecksWithProfile } from '../verification/run-approved-checks.js'
+import type { CheckResult } from '../contracts/verification-preflight-report.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -104,4 +106,29 @@ export async function runProjectTestExecutor(
     : ''
 
   return { verification: parseResult.data, testOutput, stdout }
+}
+
+export interface CapsuleCheckRunResult {
+  checks: CheckResult[]
+  allPassed: boolean
+}
+
+/**
+ * Run contract-declared named checks inside the capsule image.
+ *
+ * This is the live-session counterpart of the `powerplant verify` preflight.
+ * Both must call `executeChecksWithProfile` to guarantee identical tooling.
+ *
+ * The workspace is the agent's writable disposable workspace — it contains
+ * the sanitized snapshot plus any files the agent has written.
+ * No original project is mounted; no credentials are passed.
+ */
+export async function runCapsuleProjectChecks(
+  workspacePath: string,
+  checks: Record<string, { command: string }>,
+  verificationProfileId: string | null,
+): Promise<CapsuleCheckRunResult> {
+  const results = await executeChecksWithProfile(workspacePath, checks, verificationProfileId)
+  const allPassed = results.every(r => r.verdict === 'PASS')
+  return { checks: results, allPassed }
 }

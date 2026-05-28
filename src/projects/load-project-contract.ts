@@ -21,6 +21,7 @@ interface RawPolicyYaml {
 }
 
 interface RawVerifyYaml {
+  verificationProfile?: unknown
   checks?: unknown
 }
 
@@ -33,6 +34,8 @@ export interface LoadedProjectContract extends ProjectContract {
   allowedWritePaths: string[]
   /** Named checks the agent may invoke, mapped to their fixed commands */
   allowedChecks: Record<string, { command: string }>
+  /** Optional verification runtime profile declared in VERIFY.yaml */
+  verificationProfile: string | null
 }
 
 // ── Path safety ───────────────────────────────────────────────────────────────
@@ -159,7 +162,10 @@ function loadPolicyYaml(policyPath: string): {
   return { projectId, includePaths, excludePaths, denyIfPresentAfterCopy, allowedReadPaths, allowedWritePaths }
 }
 
-function loadVerifyYaml(verifyPath: string): Record<string, { command: string }> {
+function loadVerifyYaml(verifyPath: string): {
+  checks: Record<string, { command: string }>
+  verificationProfile: string | null
+} {
   let raw: unknown
   try {
     raw = yaml.load(fs.readFileSync(verifyPath, 'utf-8'))
@@ -172,6 +178,22 @@ function loadVerifyYaml(verifyPath: string): Record<string, { command: string }>
   }
 
   const doc = raw as RawVerifyYaml
+
+  // Optional verificationProfile field
+  let verificationProfile: string | null = null
+  if (doc.verificationProfile !== undefined) {
+    if (typeof doc.verificationProfile !== 'string' || !doc.verificationProfile.trim()) {
+      throw new Error(
+        "VERIFY.yaml: 'verificationProfile' must be a non-empty string when present",
+      )
+    }
+    if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(doc.verificationProfile.trim())) {
+      throw new Error(
+        `VERIFY.yaml: 'verificationProfile' must match /^[a-zA-Z][a-zA-Z0-9_-]*$/ — got '${doc.verificationProfile}'`,
+      )
+    }
+    verificationProfile = doc.verificationProfile.trim()
+  }
 
   if (!doc.checks || typeof doc.checks !== 'object' || Array.isArray(doc.checks)) {
     throw new Error("VERIFY.yaml: 'checks' must be a mapping of check-id → { command: string }")
@@ -198,7 +220,7 @@ function loadVerifyYaml(verifyPath: string): Record<string, { command: string }>
     throw new Error("VERIFY.yaml: 'checks' must define at least one check")
   }
 
-  return checks
+  return { checks, verificationProfile }
 }
 
 // ── Public loader ─────────────────────────────────────────────────────────────
@@ -230,7 +252,7 @@ export function loadProjectContract(sourcePath: string): LoadedProjectContract {
   }
 
   const policy = loadPolicyYaml(policyPath)
-  const allowedChecks = loadVerifyYaml(verifyPath)
+  const { checks: allowedChecks, verificationProfile } = loadVerifyYaml(verifyPath)
 
   // Build the ProjectContract portion (sanitizer-facing)
   const projectContract: ProjectContract = {
@@ -250,5 +272,6 @@ export function loadProjectContract(sourcePath: string): LoadedProjectContract {
     allowedReadPaths: policy.allowedReadPaths,
     allowedWritePaths: policy.allowedWritePaths,
     allowedChecks,
+    verificationProfile,
   }
 }
