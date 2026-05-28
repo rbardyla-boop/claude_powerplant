@@ -121,6 +121,7 @@ export async function generatePatchPackage(opts: {
   contract: LoadedProjectContract
   sourceVerification: SourceVerificationResult
   checkResults: CheckResult[] | null
+  checksValidAfterLastWrite?: boolean
   customToolCounts: Record<string, number>
   finalResponse: string
   patchDir: string
@@ -135,6 +136,7 @@ export async function generatePatchPackage(opts: {
     contract,
     sourceVerification,
     checkResults,
+    checksValidAfterLastWrite,
     customToolCounts,
     finalResponse,
     patchDir,
@@ -271,9 +273,14 @@ export async function generatePatchPackage(opts: {
   patchFiles.push('ADVERSARIAL_REVIEW.md')
 
   // ── SESSION_SUMMARY.json ──────────────────────────────────────────────────
-  const verPassed = checkResults
-    ? checkResults.every(r => r.verdict === 'PASS')
-    : false
+  // Derive passed from the FINAL required check state, not from all historical attempts.
+  const lastCheck = checkResults && checkResults.length > 0
+    ? checkResults[checkResults.length - 1]
+    : null
+  const finalCheckPassed = checksValidAfterLastWrite !== undefined
+    ? checksValidAfterLastWrite && lastCheck?.verdict === 'PASS'
+    : lastCheck?.verdict === 'PASS'
+  const verPassed = finalCheckPassed ?? false
   const isGeneratedPilot = contract.projectId === 'powerplant-pilot-status'
   const summary: SessionSummaryData = {
     sprintId: 'sprint4a',

@@ -92,11 +92,39 @@ export const WriteFileResultSchema = z.object({
 })
 export type WriteFileResult = z.infer<typeof WriteFileResultSchema>
 
+// ── Diagnostic types ──────────────────────────────────────────────────────────
+
+export const TestFailureEntrySchema = z.object({
+  file: z.string().optional(),
+  name: z.string().optional(),
+  message: z.string().optional(),
+  expected: z.string().optional(),
+  received: z.string().optional(),
+  location: z.string().optional(),
+})
+export type TestFailureEntry = z.infer<typeof TestFailureEntrySchema>
+
+export const TypescriptErrorEntrySchema = z.object({
+  file: z.string(), line: z.number(), col: z.number(), code: z.string(), message: z.string(),
+})
+export type TypescriptErrorEntry = z.infer<typeof TypescriptErrorEntrySchema>
+
+export const RunCheckDiagnosticsSchema = z.object({
+  runnerKind: z.enum(['test', 'typecheck']),
+  verdict: z.string(),
+  exitCode: z.number().nullable(),
+  failingTests: z.array(TestFailureEntrySchema).optional(),
+  typescriptErrors: z.array(TypescriptErrorEntrySchema).optional(),
+  truncated: z.boolean(),
+})
+export type RunCheckDiagnostics = z.infer<typeof RunCheckDiagnosticsSchema>
+
 export const RunCheckResultSchema = z.object({
   checkId: z.string(),
   passed: z.boolean(),
   exitCode: z.number().int(),
   summary: z.string(),
+  diagnostics: RunCheckDiagnosticsSchema.optional(),
 })
 export type RunCheckResult = z.infer<typeof RunCheckResultSchema>
 
@@ -170,4 +198,23 @@ function parseOrThrow<T>(
     )
   }
   return result.data
+}
+
+// ── Run lifecycle classification ───────────────────────────────────────────────
+
+export type RunTerminationReason =
+  | 'COMPLETED'
+  | 'FAILED_INCOMPLETE_AGENT_RUN'
+  | 'FAILED_TOOL_BUDGET_EXHAUSTED'
+
+export interface RunClassification {
+  terminationReason: RunTerminationReason
+  patchEligibleForApplication: boolean
+  readCount: number
+  writeCount: number
+  checkCount: number
+  finalizeAttempted: boolean
+  artifactsComplete: boolean
+  repeatedCheckFailures: boolean
+  lastFailedDiagnostic?: RunCheckDiagnostics
 }

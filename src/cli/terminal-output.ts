@@ -1,6 +1,7 @@
 import type { InspectionReport } from '../contracts/inspection-report.js'
 import type { SanitizationPreview } from '../projects/preview-sanitization.js'
 import type { VerificationReport, CheckResult } from '../contracts/verification-preflight-report.js'
+import type { RunClassification } from '../contracts/project-tool-contracts.js'
 import { parseVerificationReport } from './parse-verification-report.js'
 
 export interface DoctorReportOptions {
@@ -319,8 +320,9 @@ export function printReviewReport(opts: {
   adversarialMd: string
   sessionSummary: Record<string, unknown>
   promptEnvelope?: Record<string, unknown>
+  runClassification?: RunClassification
 }): void {
-  const { runId, artifactDir, task, patchDiff, sessionSummary, promptEnvelope } = opts
+  const { runId, artifactDir, task, patchDiff, sessionSummary, promptEnvelope, runClassification } = opts
   console.log()
   console.log(`Run ID: ${runId}`)
   console.log()
@@ -339,33 +341,61 @@ export function printReviewReport(opts: {
   }
   console.log()
 
-  // Verification — derived from VERIFICATION_REPORT.md, not sessionSummary.passed.
-  // sessionSummary.passed is set at run-time from the first check sequence and
-  // is incorrect for self-corrected runs (FAIL on attempt 1, PASS on attempt 2).
-  const parsed = parseVerificationReport(opts.verificationMd)
-  const hasSelfCorrection = parsed.intermediateIndices.size > 0
-
+  // Verification — RUN_CLASSIFICATION.json is authoritative when present.
+  // Falls back to parsing VERIFICATION_REPORT.md for runs without classification.
   console.log('Verification:')
-  console.log()
-  if (parsed.format === 'current') {
-    const verdictLabel = parsed.finalVerdict === 'PASS'
-      ? hasSelfCorrection ? 'PASS  (self-corrected)' : 'PASS'
-      : parsed.hasIntegrityFailure ? 'FAIL  (verification integrity failure)' : 'FAIL'
-    console.log(`  Final verdict:  ${verdictLabel}`)
+  if (runClassification) {
+    // Authoritative path: broker-written classification
+    const eligible = runClassification.patchEligibleForApplication
+    const reason = runClassification.terminationReason
+    console.log(`  Final verdict:     ${eligible ? 'PASS — ELIGIBLE FOR HUMAN REVIEW' : `INELIGIBLE (${reason})`}`)
+    console.log(`  Termination:       ${reason}`)
+    console.log(`  Checks run:        ${runClassification.checkCount}`)
+    if (runClassification.checkCount > 1) {
+      console.log(`  Note: ${runClassification.checkCount} check attempts — intermediate failures are normal in a self-correcting run`)
+    }
     console.log()
-    console.log('  Check history:')
-    const maxLen = Math.max(...parsed.attempts.map(a => a.checkId.length), 4)
-    parsed.attempts.forEach((a, i) => {
-      const label = parsed.intermediateIndices.has(i) ? '  ← self-corrected' : ''
-      console.log(`    ${a.checkId.padEnd(maxLen + 2)}${a.verdict}${label}`)
-    })
   } else {
-    // Legacy or unknown format: never invent a PASS verdict.
-    console.log(`  Final verdict:  UNKNOWN`)
-    console.log(`  (legacy artifact — ordered attempt history not available)`)
-    console.log(`  SESSION_SUMMARY.passed: ${sessionSummary['passed']}  [from legacy artifact — not authoritative]`)
+    // Legacy path: parse VERIFICATION_REPORT.md
+    const parsed = parseVerificationReport(opts.verificationMd)
+    const hasSelfCorrection = parsed.intermediateIndices.size > 0
+    console.log()
+    if (parsed.format === 'current') {
+      const verdictLabel = parsed.finalVerdict === 'PASS'
+        ? hasSelfCorrection ? 'PASS  (self-corrected)' : 'PASS'
+        : parsed.hasIntegrityFailure ? 'FAIL  (verification integrity failure)' : 'FAIL'
+      console.log(`  Final verdict:  ${verdictLabel}`)
+      console.log()
+      console.log('  Check history:')
+      const maxLen = Math.max(...parsed.attempts.map(a => a.checkId.length), 4)
+      parsed.attempts.forEach((a, i) => {
+        const label = parsed.intermediateIndices.has(i) ? '  ← self-corrected' : ''
+        console.log(`    ${a.checkId.padEnd(maxLen + 2)}${a.verdict}${label}`)
+      })
+    } else {
+      console.log(`  Final verdict:  UNKNOWN`)
+      console.log(`  (legacy artifact — ordered attempt history not available)`)
+      console.log(`  SESSION_SUMMARY.passed: ${sessionSummary['passed']}  [from legacy artifact — not authoritative]`)
+    }
+    console.log()
+
+    const securityOk = sessionSummary['originalProjectMounted'] !== true &&
+      sessionSummary['sourceUnmodified'] !== false
+    let eligibility: string
+    if (parsed.format !== 'current') {
+      eligibility = 'INELIGIBLE — final verification not determinable from stored artifacts'
+    } else if (parsed.hasIntegrityFailure) {
+      eligibility = 'INELIGIBLE — verification integrity failure (zero-test or boundary violation)'
+    } else if (parsed.finalVerdict !== 'PASS') {
+      eligibility = 'INELIGIBLE — final verification failed'
+    } else if (!securityOk) {
+      eligibility = 'INELIGIBLE — security boundary violation'
+    } else {
+      eligibility = 'ELIGIBLE FOR HUMAN REVIEW'
+    }
+    console.log(`Patch eligibility: ${eligibility}`)
+    console.log()
   }
-  console.log()
 
   // Security summary
   console.log('Security summary:')
@@ -387,24 +417,6 @@ export function printReviewReport(opts: {
     console.log(`  - Msg hash:   ${hash}`)
     console.log()
   }
-
-  // Patch eligibility — derived from parsed final verdict, not sessionSummary.passed
-  const securityOk = sessionSummary['originalProjectMounted'] !== true &&
-    sessionSummary['sourceUnmodified'] !== false
-  let eligibility: string
-  if (parsed.format !== 'current') {
-    eligibility = 'INELIGIBLE — final verification not determinable from stored artifacts'
-  } else if (parsed.hasIntegrityFailure) {
-    eligibility = 'INELIGIBLE — verification integrity failure (zero-test or boundary violation)'
-  } else if (parsed.finalVerdict !== 'PASS') {
-    eligibility = 'INELIGIBLE — final verification failed'
-  } else if (!securityOk) {
-    eligibility = 'INELIGIBLE — security boundary violation'
-  } else {
-    eligibility = 'ELIGIBLE FOR HUMAN REVIEW'
-  }
-  console.log(`Patch eligibility: ${eligibility}`)
-  console.log()
 
   console.log('Patch path:')
   console.log(`  ${artifactDir}/PATCH.diff`)
