@@ -177,3 +177,6 @@ export const SPRINT4A_TEST_OUTPUT_FILENAME = 'TEST_OUTPUT.txt' as const
 
 // Clearance invariants
 export const SPRINT4A_CLEARED_FOR_GENERATED_PILOT = true as const
+
+// Skill Invocation Audit — Stage 2A
+export const SKILL_INVOCATION_AUDIT_FILENAME = 'skill-invocation-audit.jsonl' as const
