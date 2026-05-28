@@ -10,15 +10,15 @@ import {
 } from '../contracts/project-tool-contracts.js'
 import type {
   PilotToolName,
-  PilotVerification,
   ListFilesResult,
   ReadFileResult,
   WriteFileResult,
   RunCheckResult,
   FinalizeResult,
 } from '../contracts/project-tool-contracts.js'
+import type { CheckResult } from '../contracts/verification-preflight-report.js'
 import type { LoadedProjectContract } from '../projects/load-project-contract.js'
-import { runProjectTestExecutor } from './project-executor-actions.js'
+import { runCapsuleProjectChecks } from './project-executor-actions.js'
 import { generatePatchPackage } from '../projects/generate-patch-package.js'
 import { verifySourceUnchanged } from '../projects/verify-source-unchanged.js'
 import type { PilotSnapshot } from '../projects/build-pilot-snapshot.js'
@@ -40,7 +40,7 @@ export interface ProjectBrokerSessionResult {
   builtinToolUseCount: number
   customToolCounts: Record<string, number>
   finalResponse: string
-  verification: PilotVerification | null
+  checkResults: CheckResult[] | null
   patchPackage: import('../projects/generate-patch-package.js').PatchPackage | null
   passed: boolean
 }
@@ -49,19 +49,24 @@ interface BrokerState {
   snapshot: PilotSnapshot
   contract: LoadedProjectContract
   runId: string
-  outputDir: string
   patchDir: string
   taskDescription: string
   agentMessage: string
   modelId: string
   testCheckPassed: boolean
   finalizeReceived: boolean
-  verification: PilotVerification | null
+  checkResults: CheckResult[]
+  lastCheckResult: CheckResult | null
   patchPackage: import('../projects/generate-patch-package.js').PatchPackage | null
   customToolCounts: Record<string, number>
   builtinToolUseCount: number
   finalResponse: string
   totalCustomToolCalls: number
+  // Tracks whether all required checks have been run after the most recent write.
+  // Starts false; set to true on PASS check; reset to false on any write.
+  checksValidAfterLastWrite: boolean
+  lastWriteAt: number | null
+  lastCheckPassedAt: number | null
   // Persists computed results across turns — needed because the API processes
   // batched results one at a time and re-emits requires_action for remaining IDs.
   computedResults: Map<string, string>
@@ -132,6 +137,10 @@ function handleWriteFile(state: BrokerState, input: unknown): string {
   fs.mkdirSync(path.dirname(absPath), { recursive: true })
   fs.writeFileSync(absPath, content, 'utf-8')
 
+  // Any write invalidates the check gate — the agent must re-run checks.
+  state.checksValidAfterLastWrite = false
+  state.lastWriteAt = Date.now()
+
   const result: WriteFileResult = { path: relPath, written: true }
   return JSON.stringify(result)
 }
@@ -151,27 +160,25 @@ async function handleRunCheck(state: BrokerState, input: unknown): Promise<strin
   const checkEntry = state.contract.allowedChecks[check]!
   console.log(`[broker] project_run_check: check=${check} command=${checkEntry.command}`)
 
-  const testResult = await runProjectTestExecutor(
+  const capsuleResult = await runCapsuleProjectChecks(
     state.snapshot.workspacePath,
-    state.outputDir,
+    { [check]: checkEntry },
+    state.contract.verificationProfile,
   )
 
-  state.verification = testResult.verification
-  state.testCheckPassed = testResult.verification.passed
+  const checkResult = capsuleResult.checks[0]!
+  state.lastCheckResult = checkResult
+  state.checkResults.push(checkResult)
 
-  // Copy test output to the run patchDir/executor-output
-  const executorOutputDir = path.join(state.patchDir, 'executor-output')
-  fs.mkdirSync(executorOutputDir, { recursive: true })
+  const passed = checkResult.verdict === 'PASS'
+  state.testCheckPassed = passed
 
-  const srcOutputDir = state.outputDir
-  for (const f of fs.readdirSync(srcOutputDir)) {
-    fs.copyFileSync(
-      path.join(srcOutputDir, f),
-      path.join(executorOutputDir, f),
-    )
+  if (passed) {
+    state.checksValidAfterLastWrite = true
+    state.lastCheckPassedAt = Date.now()
   }
 
-  const testOutputSummary = testResult.testOutput
+  const summaryLines = checkResult.stdoutTail
     .split('\n')
     .filter(l => l.startsWith('# ') || l.startsWith('ok ') || l.startsWith('not ok '))
     .slice(0, 20)
@@ -179,9 +186,9 @@ async function handleRunCheck(state: BrokerState, input: unknown): Promise<strin
 
   const result: RunCheckResult = {
     checkId: check,
-    passed: testResult.verification.passed,
-    exitCode: testResult.verification.exitCode,
-    summary: testOutputSummary || `exit=${testResult.verification.exitCode}`,
+    passed,
+    exitCode: checkResult.exitCode ?? -1,
+    summary: summaryLines || `verdict=${checkResult.verdict} exit=${checkResult.exitCode}`,
   }
   return JSON.stringify(result)
 }
@@ -195,6 +202,14 @@ async function handleFinalize(state: BrokerState, input: unknown): Promise<strin
       'Call project_run_check with a declared check ID and ensure it passes first.',
     )
   }
+
+  if (!state.checksValidAfterLastWrite) {
+    throw new Error(
+      'project_finalize rejected: all required checks must pass after the most recent write. ' +
+      'Call project_run_check again after your last project_write_file.',
+    )
+  }
+
   if (state.finalizeReceived) {
     throw new Error('project_finalize already called — duplicate call rejected')
   }
@@ -207,7 +222,7 @@ async function handleFinalize(state: BrokerState, input: unknown): Promise<strin
     snapshot: state.snapshot,
     contract: state.contract,
     sourceVerification,
-    verification: state.verification,
+    checkResults: state.checkResults.length > 0 ? state.checkResults : null,
     customToolCounts: state.customToolCounts,
     finalResponse: SPRINT4A_FINAL_RESPONSE,
     patchDir: state.patchDir,
@@ -250,7 +265,6 @@ export async function runProjectPilotBrokerSession(opts: {
     snapshot,
     contract,
     runId,
-    outputDir,
     patchDir,
     taskDescription,
     agentMessage = taskDescription,
@@ -260,19 +274,22 @@ export async function runProjectPilotBrokerSession(opts: {
     snapshot,
     contract,
     runId,
-    outputDir,
     patchDir,
     taskDescription,
     agentMessage,
     modelId: SPRINT4A_PILOT_MODEL,
     testCheckPassed: false,
     finalizeReceived: false,
-    verification: null,
+    checkResults: [],
+    lastCheckResult: null,
     patchPackage: null,
     customToolCounts: {},
     builtinToolUseCount: 0,
     finalResponse: '',
     totalCustomToolCalls: 0,
+    checksValidAfterLastWrite: false,
+    lastWriteAt: null,
+    lastCheckPassedAt: null,
     computedResults: new Map(),
   }
 
@@ -400,7 +417,7 @@ export async function runProjectPilotBrokerSession(opts: {
     builtinToolUseCount: state.builtinToolUseCount,
     customToolCounts: state.customToolCounts,
     finalResponse: state.finalResponse.trim(),
-    verification: state.verification,
+    checkResults: state.checkResults.length > 0 ? state.checkResults : null,
     patchPackage: state.patchPackage,
     passed,
   }

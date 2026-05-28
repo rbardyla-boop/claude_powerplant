@@ -5,8 +5,8 @@ import path from 'path'
 import crypto from 'crypto'
 import type { PilotSnapshot } from './build-pilot-snapshot.js'
 import type { SourceVerificationResult } from './verify-source-unchanged.js'
-import type { PilotVerification } from '../contracts/project-tool-contracts.js'
 import type { LoadedProjectContract } from './load-project-contract.js'
+import type { CheckResult } from '../contracts/verification-preflight-report.js'
 import { matchesGlob } from './build-sanitized-workspace.js'
 import {
   SPRINT4A_CLEARED_FOR_GENERATED_PILOT,
@@ -120,7 +120,7 @@ export async function generatePatchPackage(opts: {
   snapshot: PilotSnapshot
   contract: LoadedProjectContract
   sourceVerification: SourceVerificationResult
-  verification: PilotVerification | null
+  checkResults: CheckResult[] | null
   customToolCounts: Record<string, number>
   finalResponse: string
   patchDir: string
@@ -134,7 +134,7 @@ export async function generatePatchPackage(opts: {
     snapshot,
     contract,
     sourceVerification,
-    verification,
+    checkResults,
     customToolCounts,
     finalResponse,
     patchDir,
@@ -230,14 +230,21 @@ export async function generatePatchPackage(opts: {
   patchFiles.push('CHANGED_FILES.md')
 
   // ── VERIFICATION_REPORT.md ────────────────────────────────────────────────
-  const verReport = verification
-    ? `# Verification Report\n\n` +
-      `Check ID: \`${verification.checkId}\`\n` +
-      `Fixed action: \`${verification.fixedAction}\`\n` +
-      `Exit code: ${verification.exitCode}\n` +
-      `Result: **${verification.passed ? 'PASSED' : 'FAILED'}**\n\n` +
-      `See \`executor-output/TEST_OUTPUT.txt\` for raw test output.\n`
-    : `# Verification Report\n\nNo verification result recorded — project_run_check was not called.\n`
+  let verReport: string
+  if (checkResults && checkResults.length > 0) {
+    const lines = checkResults.map(r =>
+      `### Check: \`${r.checkId}\`\n` +
+      `Command: \`${r.command}\`\n` +
+      `Exit code: ${r.exitCode ?? 'null'}\n` +
+      `Result: **${r.verdict}**\n` +
+      (r.stdoutTail ? `\`\`\`\n${r.stdoutTail}\n\`\`\`\n` : ''),
+    )
+    verReport =
+      `# Verification Report\n\n` +
+      lines.join('\n')
+  } else {
+    verReport = `# Verification Report\n\nNo verification result recorded — project_run_check was not called.\n`
+  }
   const verReportPath = path.join(patchDir, 'VERIFICATION_REPORT.md')
   fs.writeFileSync(verReportPath, verReport, 'utf-8')
   patchFiles.push('VERIFICATION_REPORT.md')
@@ -264,7 +271,9 @@ export async function generatePatchPackage(opts: {
   patchFiles.push('ADVERSARIAL_REVIEW.md')
 
   // ── SESSION_SUMMARY.json ──────────────────────────────────────────────────
-  const verPassed = verification?.passed ?? false
+  const verPassed = checkResults
+    ? checkResults.every(r => r.verdict === 'PASS')
+    : false
   const isGeneratedPilot = contract.projectId === 'powerplant-pilot-status'
   const summary: SessionSummaryData = {
     sprintId: 'sprint4a',

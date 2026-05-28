@@ -77,7 +77,6 @@ export async function runSanitizedProjectPilot(opts: {
   const runtimeBase = SPRINT4A_RUNTIME_BASE
   fs.mkdirSync(runtimeBase, { recursive: true })
   const runDir = path.join(runtimeBase, runId)
-  const outputDir = path.join(runDir, 'executor-outputs')
   const patchDir = path.join(runtimeBase, 'runs', 'powerplant-pilot-status', runId)
 
   fs.mkdirSync(runDir, { recursive: true })
@@ -99,7 +98,7 @@ export async function runSanitizedProjectPilot(opts: {
     snapshot,
     contract,
     runId,
-    outputDir,
+    outputDir: path.join(runDir, 'executor-outputs'),
     patchDir,
     taskDescription: TASK_DESCRIPTION,
   })
@@ -117,10 +116,12 @@ export async function runSanitizedProjectPilot(opts: {
     brokerResult.passed &&
     sourceVerification.sourceUnmodified
 
+  const checksPassed = brokerResult.checkResults !== null &&
+    brokerResult.checkResults.every(r => r.verdict === 'PASS')
   const clearedForGeneratedExternalPilot =
     passed &&
     brokerResult.builtinToolUseCount === 0 &&
-    brokerResult.verification?.passed === true
+    checksPassed
 
   return {
     sprintId: 'sprint4a',
@@ -136,12 +137,12 @@ export async function runSanitizedProjectPilot(opts: {
       finalResponse: brokerResult.finalResponse,
       finalResponseCorrect,
     },
-    verification: brokerResult.verification
+    verification: brokerResult.checkResults && brokerResult.checkResults.length > 0
       ? {
-          passed: brokerResult.verification.passed,
-          exitCode: brokerResult.verification.exitCode,
-          checkId: brokerResult.verification.checkId,
-          fixedAction: brokerResult.verification.fixedAction,
+          passed: brokerResult.checkResults.every(r => r.verdict === 'PASS'),
+          exitCode: brokerResult.checkResults[0]?.exitCode ?? -1,
+          checkId: brokerResult.checkResults[0]?.checkId ?? '',
+          fixedAction: brokerResult.checkResults[0]?.verdict ?? '',
         }
       : null,
     patch: brokerResult.patchPackage
