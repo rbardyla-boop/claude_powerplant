@@ -26,13 +26,20 @@ export function printInspectReport(report: InspectionReport): void {
     console.log(`Excluded from snapshot: ${report.sanitizationPreview.excludedFileCount} file(s)`)
   }
 
-  if (report.sanitizationPreview.forbiddenDetected.length > 0) {
-    console.log('Forbidden paths present in source (excluded, contents never read):')
-    for (const p of report.sanitizationPreview.forbiddenDetected) {
+  if (report.sanitizationPreview.forbiddenInSource.length > 0) {
+    console.log('Excluded paths present in source (contents never read):')
+    for (const p of report.sanitizationPreview.forbiddenInSource) {
       console.log(`  - ${p}`)
     }
   } else {
-    console.log('No forbidden paths detected in source.')
+    console.log('No excluded paths detected in source.')
+  }
+
+  if (report.sanitizationPreview.forbiddenDetected.length > 0) {
+    console.log('VIOLATION: Forbidden paths would appear in sanitized snapshot:')
+    for (const p of report.sanitizationPreview.forbiddenDetected) {
+      console.log(`  - ${p}`)
+    }
   }
 
   console.log()
@@ -82,10 +89,10 @@ export function printRunDisclosureSummary(opts: {
   console.log()
   console.log('Original repo will not be modified.')
   console.log('Network access inside executor: disabled.')
-  if (preview.forbiddenDetected.length > 0) {
+  if (preview.forbiddenInSource.length > 0) {
     console.log()
-    console.log('Note: forbidden paths detected in source (will be excluded):')
-    for (const p of preview.forbiddenDetected) {
+    console.log('Note: excluded paths detected in source (will not be copied):')
+    for (const p of preview.forbiddenInSource) {
       console.log(`  - ${p}`)
     }
   }

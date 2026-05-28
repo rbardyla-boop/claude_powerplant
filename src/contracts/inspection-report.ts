@@ -9,6 +9,7 @@ export const InspectionReportSchema = z.object({
     passed: z.boolean(),
     includedFiles: z.array(z.string()),
     excludedFileCount: z.number().int(),
+    forbiddenInSource: z.array(z.string()),
     forbiddenDetected: z.array(z.string()),
     allForbiddenAbsent: z.boolean(),
   }),

@@ -70,6 +70,7 @@ export async function cmdInspect(projectPath: string): Promise<void> {
       passed: preview.allForbiddenAbsent,
       includedFiles: preview.includedFiles,
       excludedFileCount: preview.excludedFiles.length,
+      forbiddenInSource: preview.forbiddenInSource,
       forbiddenDetected: preview.forbiddenDetected,
       allForbiddenAbsent: preview.allForbiddenAbsent,
     },

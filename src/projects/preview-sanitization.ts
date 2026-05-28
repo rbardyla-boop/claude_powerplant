@@ -6,6 +6,9 @@ import type { ProjectContract } from './project-contract.js'
 export interface SanitizationPreview {
   includedFiles: string[]
   excludedFiles: string[]
+  /** denyIfPresentAfterCopy items found in the source tree — informational only, never a FAIL */
+  forbiddenInSource: string[]
+  /** denyIfPresentAfterCopy items that would appear in the sanitized snapshot — this is the FAIL condition */
   forbiddenDetected: string[]
   allForbiddenAbsent: boolean
 }
@@ -44,10 +47,25 @@ export function previewSanitization(contract: ProjectContract): SanitizationPrev
     }
   }
 
-  // Check which forbidden paths actually exist in the source tree
-  const forbiddenDetected: string[] = []
+  // Informational: which denyIfPresentAfterCopy items exist in source.
+  // Their presence in source is expected for real projects and is NOT a failure.
+  // Contents are never read — only the relative path is recorded.
+  const forbiddenInSource: string[] = []
   for (const item of contract.denyIfPresentAfterCopy) {
     if (fs.existsSync(path.join(sourcePath, item))) {
+      forbiddenInSource.push(item)
+    }
+  }
+
+  // FAIL condition: would any denyIfPresentAfterCopy item appear in the sanitized snapshot?
+  // Checks whether any included file equals or is nested under a forbidden item path.
+  const forbiddenDetected: string[] = []
+  for (const item of contract.denyIfPresentAfterCopy) {
+    const normalizedItem = item.replace(/\\/g, '/')
+    const wouldAppearInSnapshot = includedFiles.some(
+      f => f === normalizedItem || f.startsWith(normalizedItem + '/'),
+    )
+    if (wouldAppearInSnapshot) {
       forbiddenDetected.push(item)
     }
   }
@@ -55,6 +73,7 @@ export function previewSanitization(contract: ProjectContract): SanitizationPrev
   return {
     includedFiles: includedFiles.sort(),
     excludedFiles: excludedFiles.sort(),
+    forbiddenInSource,
     forbiddenDetected,
     allForbiddenAbsent: forbiddenDetected.length === 0,
   }
