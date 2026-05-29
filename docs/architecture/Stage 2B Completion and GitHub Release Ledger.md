@@ -52,18 +52,27 @@ Validated at `36b9efc`: `1021/1021` tests passing across 56 files, `npx tsc --no
 
 No live API call or live session was executed.
 
-### Gate 2 — Immutable Fixture Binding and Production CLI — **IN PROGRESS**
+### Gate 2 — Immutable Fixture Binding and Production CLI — **CLOSED** (`4782563`)
 
-Required outcomes:
+Repairs completed (commits `589821d`, `4782563`):
 
-* `fixtureAContentHash` is bound to immutable L0 evidence (`l0-fixture-receipt.json` written
-  by `acceptance-bootstrap.ts` after promotion; never recomputed from mutable registry at CLI time).
-* A real L1 CLI entrypoint (`src/cli/l1-harness-run.ts`) exists and calls only `runL1Harness`.
-* The CLI never imports or calls `_runL1HarnessForTesting`.
-* Missing, altered or malformed receipts fail closed before any live work.
-* All tests and typecheck pass.
+1. Side-effect-free import boundary: `L0_FIXTURE_RECEIPT_FILENAME` extracted to pure
+   `src/acceptance/l0-fixture-receipt.ts`. Both `acceptance-bootstrap.ts` and
+   `l1-harness-run.ts` import from it. No mock needed in tests. Import of the CLI
+   entrypoint triggers no side effects.
+2. Authentic L0 fixture binding (Case A): `loadL0Receipt()` validates JSON structure and
+   hash format; `runL1Harness()` Step 2 cross-checks `receipt.contentHash` against the
+   registry entry written by `promoteSkill()` at bootstrap time. Altered or substituted
+   receipts fail closed before `pilotExecutor` is called (proven by l1-runner.test.ts).
+3. Truthful `builtinToolUseCount`: success path is evidence-derived from observed
+   `agent.tool_use` events in the broker session loop. Exception path (broker threw,
+   `brokerResult` null) now emits sentinel `-1` instead of defaulting to zero, preventing
+   a false `builtinToolCountZero` assertion on paths where tool use was unobservable.
+   Harness rejects -1 before any oracle work (proven by new l1-runner.test.ts case).
 
-No live API call or live session is permitted.
+Validated at `4782563`: `1032/1032` tests passing across 57 files, `npx tsc --noEmit` clean.
+
+No live API call or live session was executed.
 
 ### Gate 3 — Hostile Pre-Live Audit
 
