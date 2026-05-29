@@ -1,7 +1,7 @@
 {
-  "sessionId": "sesn_01YGm6yaAix5ZK6AKzcDTNaa",
-  "agentId": "agent_01V7xKomsvPpDFD9av5k2Cz5",
-  "environmentId": "env_011EQX7YyqAt2F7MQRRDfXGd",
+  "sessionId": "[REDACTED_LIVE_SESSION_ID]",
+  "agentId": "[REDACTED_AGENT_ID]",
+  "environmentId": "[REDACTED_ENVIRONMENT_ID]",
   "writeDenied": true,
   "noOutputVerified": true,
   "passed": true,

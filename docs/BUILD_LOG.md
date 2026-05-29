@@ -748,7 +748,7 @@ and re-provisioned both.
 | Field | Value |
 |-------|-------|
 | Agent | `agent_01PjWjAATvFJDox4kvX7cfGH` |
-| Session | `sesn_01LY47xPdjmHuEV44myhAVbF` |
+| Session | `[REDACTED_LIVE_SESSION_ID]` |
 | `customToolUseCount` | `1` ✓ |
 | `builtinToolUseCount` | `0` ✓ |
 | `finalResponseCorrect` | `true` ✓ |
@@ -800,7 +800,7 @@ and fixed verification — without modifying or mounting the source project.
 
 ### Completion checklist
 
-- [x] External pilot project created at `/home/thebackhand/Downloads/grok/powerplant_pilot_status/`
+- [x] External pilot project created at `[REDACTED_LOCAL_PATH]/`
 - [x] Pilot contains forbidden canary files (`.env`, `private/secret.txt`, `deployment/release.txt`)
 - [x] `SPRINT4A_PILOT_CONTRACT` defined in `src/contracts/project-pilot-contract.ts`
 - [x] Five custom tool Zod schemas in `src/contracts/project-tool-contracts.ts`
@@ -822,7 +822,7 @@ and fixed verification — without modifying or mounting the source project.
 
 ### Key proof points when live run passes
 
-- External pilot is outside Powerplant — path: `/home/thebackhand/Downloads/grok/powerplant_pilot_status/`
+- External pilot is outside Powerplant — path: `[REDACTED_LOCAL_PATH]/`
 - Pilot contains forbidden canaries before sanitization: YES
 - Canaries absent from sanitized workspace: YES
 - Original source project mounted: NO

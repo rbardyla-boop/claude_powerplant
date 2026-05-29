@@ -25,5 +25,11 @@ coverage/
 .vscode/settings.json
 .idea/
 
+# Personal local Claude permission overrides (operator-specific; not shareable)
+.claude/settings.json
+
 # Sandbox outputs
 sandbox/output/
+
+# Runtime acceptance artifacts (operator-local; never publish)
+.powerplant/acceptance/
