@@ -1,8 +1,9 @@
 // Stage 2B P0-E — capsule-v1 Docker Evaluator (Trust-Root & Result-Integrity edition)
 //
 // Extends P0-C capsule-v1 with:
-//   - Image identity verification: actual image ID checked against pinned expected ID
-//     before any candidate code runs. Execution refused on mismatch.
+//   - Registry-digest trust root (Phase B / Gate 6B2C-R): resolved RepoDigests checked
+//     against CAPSULE_V1_EXPECTED_REPO_DIGEST before any candidate code runs. Execution
+//     refused if the approved canonical reference is absent from RepoDigests.
 //   - Hardened launch policy: --cap-drop=ALL and --pids-limit added.
 //   - Trusted result channel: evaluator reads oracle's stdout for ORACLE_TRUSTED_RESULT
 //     sentinel (written by oracle using pre-import saved function references). The
@@ -11,7 +12,7 @@
 //     explicit candidateCodeExecutedInCapsule / candidateCodeExecutedOnHost / etc.
 //
 // Capsule configuration (capsule-v1):
-//   image:           powerplant-evaluator:node-test-js-v1  (pinned to known image ID)
+//   image:           CAPSULE_V1_EXPECTED_REPO_DIGEST  (immutable GHCR registry digest)
 //   network:         none  (--network=none)
 //   root fs:         read-only  (--read-only)
 //   capabilities:    dropped  (--cap-drop=ALL)
@@ -37,10 +38,10 @@
 //   saved before candidate import. Parent extracts the last valid sentinel line from
 //   captured stdout. Output file in /output is advisory and not used for trust.
 //
-// Capsule image identity (P0-E):
+// Capsule image trust root (Phase B):
 //   Before any candidate code runs, evaluator calls docker image inspect to obtain
-//   the actual image ID and compares against CAPSULE_V1_EXPECTED_IMAGE_ID. Execution
-//   is refused (throws) if the IDs do not match.
+//   the resolved RepoDigests and checks that CAPSULE_V1_EXPECTED_REPO_DIGEST is
+//   present. Execution is refused (throws) if the digest is absent or unresolvable.
 
 import crypto from 'crypto'
 import fs from 'fs'
@@ -53,7 +54,7 @@ import {
   STAGE2B_CAPSULE_EVALUATOR_PROFILE_ID,
   STAGE2B_PREFLIGHT_CONTROL_POLICY_VERSION,
   CAPSULE_DOCKER_IMAGE,
-  CAPSULE_V1_EXPECTED_IMAGE_ID,
+  CAPSULE_V1_EXPECTED_REPO_DIGEST,
   CAPSULE_ORACLE_MOUNT_TARGET,
   CAPSULE_WORKSPACE_MOUNT_TARGET,
   CAPSULE_OUTPUT_MOUNT_TARGET,
@@ -72,11 +73,12 @@ export interface CapsuleEvaluatorReceipt {
   workspacePayloadHash: string
   evaluatorProfile: typeof STAGE2B_CAPSULE_EVALUATOR_PROFILE_ID
   controlPolicyVersion: string
-  // Image identity fields (P0-E: capsule trust root)
+  // Capsule image trust root fields (Phase B: registry-digest semantics)
   capsuleImageReference: string
-  capsuleImageIdExpected: string
-  capsuleImageIdActual: string
-  capsuleImageIdentityVerified: boolean
+  capsuleCanonicalReference: string
+  capsuleResolvedRepoDigests: string[]
+  capsuleRegistryDigestVerified: boolean
+  capsuleImageIdentityVerified: boolean   // aliases capsuleRegistryDigestVerified; retained for l1-runner compatibility
   // Execution provenance fields (P0-E: corrected receipt semantics)
   candidateCodeExecutedInCapsule: boolean
   candidateCodeExecutedOnHost: false
@@ -152,16 +154,28 @@ function restoreWritable(dir: string): void {
   try { chmodRecursive(dir, 0o644, 0o755) } catch { /* best-effort */ }
 }
 
-// ── Image identity verification (P0-E Task 2) ─────────────────────────────────
+// ── Registry digest verification (Phase B / Gate 6B2C-R) ─────────────────────
 
-export function getActualCapsuleImageId(imageTag: string): string | null {
-  const result = spawnSync('docker', ['image', 'inspect', imageTag, '--format', '{{.Id}}'], {
-    encoding: 'utf-8',
-    timeout: 10000,
-    env: { PATH: process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin' },
-  })
+export function getCapsuleRepoDigests(imageRef: string): string[] | null {
+  const result = spawnSync(
+    'docker',
+    ['image', 'inspect', imageRef, '--format', '{{json .RepoDigests}}'],
+    {
+      encoding: 'utf-8',
+      timeout: 10000,
+      env: { PATH: process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin' },
+    },
+  )
   if (result.status !== 0 || result.error) return null
-  return result.stdout.trim() || null
+  const raw = result.stdout.trim()
+  if (!raw) return null
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return null
+    return parsed as string[]
+  } catch {
+    return null
+  }
 }
 
 // ── Trusted result sentinel parser (P0-E Task 5) ──────────────────────────────
@@ -208,7 +222,7 @@ export async function runOracleInCapsule(opts: {
   baseDir?: string
   timeoutMs?: number
   maxOutputBytes?: number
-  expectedImageId?: string  // override for F16 test; defaults to CAPSULE_V1_EXPECTED_IMAGE_ID
+  expectedCanonicalReference?: string  // override for F16 test; defaults to CAPSULE_V1_EXPECTED_REPO_DIGEST
 }): Promise<CapsuleEvaluatorReceipt> {
   const {
     bundleResult,
@@ -219,19 +233,22 @@ export async function runOracleInCapsule(opts: {
     maxOutputBytes = CAPSULE_MAX_OUTPUT_BYTES_DEFAULT,
   } = opts
 
-  const expectedImageId = opts.expectedImageId ?? CAPSULE_V1_EXPECTED_IMAGE_ID
+  const expectedCanonicalReference = opts.expectedCanonicalReference ?? CAPSULE_V1_EXPECTED_REPO_DIGEST
   const baseDir = opts.baseDir ?? STAGE2B_PREFLIGHT_BASE
   const oracleRunId = randomUUID()
   const containerName = `pp-cap-${oracleRunId.slice(0, 12)}`
 
-  // ── Task 2: Image identity verification ─────────────────────────────────────
-  const actualImageId = getActualCapsuleImageId(CAPSULE_DOCKER_IMAGE)
-  const capsuleImageIdentityVerified = actualImageId === expectedImageId
+  // ── Registry digest verification (Phase B / Gate 6B2C-R) ────────────────────
+  const repoDigests = getCapsuleRepoDigests(CAPSULE_V1_EXPECTED_REPO_DIGEST)
+  const capsuleRegistryDigestVerified =
+    repoDigests !== null &&
+    repoDigests.length > 0 &&
+    repoDigests.includes(expectedCanonicalReference)
 
-  if (!capsuleImageIdentityVerified) {
+  if (!capsuleRegistryDigestVerified) {
     throw new Error(
-      `CAPSULE_IMAGE_IDENTITY_MISMATCH: expected ${expectedImageId}, ` +
-      `got ${actualImageId ?? 'null (image not found)'}. ` +
+      `CAPSULE_IMAGE_IDENTITY_MISMATCH: approved canonical reference ${expectedCanonicalReference} ` +
+      `not found in resolved RepoDigests ${JSON.stringify(repoDigests ?? [])}. ` +
       `Execution refused before any candidate code runs.`
     )
   }
@@ -354,11 +371,12 @@ export async function runOracleInCapsule(opts: {
     workspacePayloadHash,
     evaluatorProfile: STAGE2B_CAPSULE_EVALUATOR_PROFILE_ID,
     controlPolicyVersion: STAGE2B_PREFLIGHT_CONTROL_POLICY_VERSION,
-    // Image identity (P0-E Task 2)
+    // Capsule image trust root (Phase B: registry-digest semantics)
     capsuleImageReference: CAPSULE_DOCKER_IMAGE,
-    capsuleImageIdExpected: expectedImageId,
-    capsuleImageIdActual: actualImageId ?? 'unknown',
-    capsuleImageIdentityVerified,
+    capsuleCanonicalReference: expectedCanonicalReference,
+    capsuleResolvedRepoDigests: repoDigests ?? [],
+    capsuleRegistryDigestVerified,
+    capsuleImageIdentityVerified: capsuleRegistryDigestVerified,
     // Execution provenance (P0-E Task 6 — corrected semantics)
     candidateCodeExecutedInCapsule,
     candidateCodeExecutedOnHost: false,

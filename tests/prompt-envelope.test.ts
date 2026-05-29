@@ -10,9 +10,10 @@ import { printReviewReport } from '../src/cli/terminal-output.js'
 import type { CheckResult } from '../src/contracts/verification-preflight-report.js'
 import type { LoadedProjectContract } from '../src/projects/load-project-contract.js'
 import { loadProjectContract } from '../src/projects/load-project-contract.js'
-import { PROMPT_ENVELOPE_PROTOCOL_VERSION } from '../src/config/constants.js'
+import { PROMPT_ENVELOPE_PROTOCOL_VERSION, SPRINT4A_PILOT_SOURCE_PATH } from '../src/config/constants.js'
 
-const PILOT_SOURCE = '/home/thebackhand/Downloads/grok/powerplant_pilot_status'
+const PILOT_SOURCE = SPRINT4A_PILOT_SOURCE_PATH
+const PILOT_AVAILABLE = Boolean(PILOT_SOURCE) && fs.existsSync(PILOT_SOURCE)
 
 const USER_TASK = 'Add a function that returns failed check names.'
 const AGENT_MESSAGE =
@@ -41,6 +42,7 @@ let tempDir: string
 let patchDir: string
 
 beforeAll(async () => {
+  if (!PILOT_AVAILABLE) return
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-envelope-test-'))
   patchDir = path.join(tempDir, 'patch')
   pilotContract = loadProjectContract(PILOT_SOURCE)
@@ -65,10 +67,11 @@ beforeAll(async () => {
 })
 
 afterAll(() => {
+  if (!PILOT_AVAILABLE) return
   fs.rmSync(tempDir, { recursive: true, force: true })
 })
 
-describe('PROMPT_ENVELOPE.json artifact', () => {
+describe.skipIf(!PILOT_AVAILABLE)('PROMPT_ENVELOPE.json artifact', () => {
   it('is emitted alongside TASK.md', () => {
     expect(fs.existsSync(path.join(patchDir, 'TASK.md'))).toBe(true)
     expect(fs.existsSync(path.join(patchDir, 'PROMPT_ENVELOPE.json'))).toBe(true)
@@ -151,7 +154,7 @@ describe('PROMPT_ENVELOPE.json artifact', () => {
   })
 })
 
-describe('review display with prompt envelope', () => {
+describe.skipIf(!PILOT_AVAILABLE)('review display with prompt envelope', () => {
   it('printReviewReport shows protocol version, model, and truncated hash', () => {
     const patchDiff = ''
     const sessionSummary = {

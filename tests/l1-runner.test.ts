@@ -201,9 +201,10 @@ function makeHappyCapsuleReceipt(overrides: Partial<CapsuleEvaluatorReceipt> = {
     workspacePayloadHash: EMPTY_PAYLOAD_HASH,
     evaluatorProfile: 'capsule-v1-node-test-js',
     controlPolicyVersion: 'stage2b-capsule-v1',
-    capsuleImageReference: 'powerplant-evaluator:node-test-js-v1',
-    capsuleImageIdExpected: 'sha256:expected',
-    capsuleImageIdActual: 'sha256:expected',
+    capsuleImageReference: 'ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e',
+    capsuleCanonicalReference: 'ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e',
+    capsuleResolvedRepoDigests: ['ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e'],
+    capsuleRegistryDigestVerified: true,
     capsuleImageIdentityVerified: true,
     candidateCodeExecutedInCapsule: true,
     candidateCodeExecutedOnHost: false,
@@ -226,7 +227,7 @@ function makeHappyCapsuleReceipt(overrides: Partial<CapsuleEvaluatorReceipt> = {
     verifiedControls: ['timeout_enforcement', 'output_cap', 'network_isolation', 'full_filesystem_isolation', 'workspace_readonly', 'env_scrubbing', 'readonly_rootfs', 'cap_drop_all', 'pids_limit', 'image_identity_verified', 'trusted_result_channel'],
     unverifiedControls: [],
     capsuleConfig: {
-      image: 'powerplant-evaluator:node-test-js-v1',
+      image: 'ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e',
       networkMode: 'none',
       readOnly: true,
       memoryLimit: '256m',
@@ -299,6 +300,18 @@ describe('L1 runner static invariants', () => {
     expect(match).not.toBeNull()
     expect(match![0]).not.toContain('_stateRootForTesting')
   })
+
+  it('pilot passes builtinToolUseCount with -1 sentinel on both return paths when broker is null', () => {
+    // Proves: a broker exception (before or after observing tool use) cannot produce
+    // builtinToolUseCount=0, because both pilot return paths use `?? -1`, not `?? 0`.
+    // The harness then rejects -1 (proven by the builtinToolUseCount enforcement tests).
+    const src = fs.readFileSync(
+      path.resolve('src/sessions/run-skill-guided-sanitized-project-pilot.ts'), 'utf-8',
+    )
+    expect(src).not.toContain('builtinToolUseCount: brokerResult?.builtinToolUseCount ?? 0')
+    const sentinels = src.match(/builtinToolUseCount:.*brokerResult.*\?\? -1/g) ?? []
+    expect(sentinels.length).toBeGreaterThanOrEqual(2)
+  })
 })
 
 // ── POWERPLANT_HOME canonical containment guard ───────────────────────────────
@@ -338,7 +351,7 @@ describe('POWERPLANT_HOME canonical containment guard', () => {
   })
 
   it('blocks on sibling-prefix path outside the acceptance root', async () => {
-    const siblingPath = '/tmp/powerplant-stage2b-acceptance-evil/run1'
+    const siblingPath = path.join(os.tmpdir(), 'powerplant-stage2b-acceptance-evil', 'run1')
     const pilotExecutor = vi.fn()
     const result = await _runL1HarnessForTesting(
       baseOpts('', { powerplantHome: siblingPath, pilotExecutor }),
@@ -574,6 +587,24 @@ describe('builtinToolUseCount enforcement', () => {
     expect(result.blockerReason).toContain('builtinToolUseCount=3')
     expect(result.evidence.builtinToolCountZero).toBe(false)
     expect(result.evidence.builtinToolUseCount).toBe(3)
+  })
+
+  it('fails when builtinToolUseCount is -1 (unobserved on broker-exception path)', async () => {
+    // -1 is the sentinel emitted by run-skill-guided-sanitized-project-pilot when
+    // brokerResult is null (broker threw). The harness must fail closed, not treat
+    // an unobserved count as proven-zero.
+    const auditPath = path.join(tmpAuditDir, 'audit.jsonl')
+    const invocationId = 'inv-builtin-neg'
+    writeAuditPair(auditPath, invocationId)
+    const pilotExecutor = vi.fn(async () => ({
+      report: makeMinimalReport(invocationId, { auditPath }),
+      builtinToolUseCount: -1,
+    }))
+    const result = await _runL1HarnessForTesting(baseOpts(auditPath, { pilotExecutor }))
+    expect(result.verdict).toBe('L1_HARNESS_FAILED')
+    expect(result.blockerReason).toContain('builtinToolUseCount=-1')
+    expect(result.evidence.builtinToolCountZero).toBe(false)
+    expect(result.evidence.builtinToolUseCount).toBe(-1)
   })
 })
 
@@ -841,7 +872,8 @@ describe('Oracle capsule evaluation checks', () => {
     const badImageOracle: L1OracleEvaluator = async () =>
       makeHappyCapsuleReceipt({
         capsuleImageIdentityVerified: false,
-        capsuleImageIdActual: 'sha256:unexpected-other',
+        capsuleRegistryDigestVerified: false,
+        capsuleResolvedRepoDigests: ['ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:' + '0'.repeat(64)],
       })
     const result = await _runL1HarnessForTesting(baseOpts(auditPath, { oracleEvaluator: badImageOracle }))
     expect(result.verdict).toBe('L1_HARNESS_FAILED')

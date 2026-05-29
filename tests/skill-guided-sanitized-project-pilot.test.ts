@@ -32,6 +32,7 @@ import path from 'path'
 import os from 'os'
 import crypto from 'crypto'
 import { fileURLToPath } from 'url'
+import { performance } from 'perf_hooks'
 
 // Real skill machinery — runs against temp POWERPLANT_HOME
 import { ingestSkillPackage } from '../src/skills/skill-ingestion.js'
@@ -1416,4 +1417,193 @@ test('T38 — Phase A record has recordPosition documenting contract-loaded-befo
   // Phase A exists before broker is called (ordering confirmed by T1 — complementary)
   const phaseB = records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_B)
   expect(phaseA!['invocationId']).toBe(phaseB!['invocationId'])
+})
+
+// ── T39: Phase B production writer emits sessionStartedAt ────────────────────
+// Proves the production writer (run-skill-guided-sanitized-project-pilot.ts)
+// actually emits sessionStartedAt in the Phase B record.
+// The L1 harness validates this field against Phase A invocationTimestamp, so
+// the production writer must emit it or the harness will reject the run.
+
+test('T39 — production writer emits sessionStartedAt in Phase B — present and parseable as ISO 8601', async () => {
+  const { contentHash } = await makePromotedSkill('test-skill-t39')
+  vi.mocked(loadProjectContract).mockReturnValue(makeFakeContract() as never)
+  vi.mocked(buildPilotSnapshot).mockReturnValue(makeFakeSnapshot(os.tmpdir()) as never)
+  vi.mocked(verifySourceUnchanged).mockReturnValue({ sourceUnmodified: true, changedFiles: [], missingFiles: [], newFiles: [] })
+  vi.mocked(runProjectPilotBrokerSession).mockResolvedValue(makeBrokerResult() as never)
+
+  await runSkillGuidedSanitizedProjectPilot({
+    skillRequest: { skillId: 'test-skill-t39', expectedHash: contentHash },
+    pilotSourcePath: '/fake/path',
+    controlClient: {} as never,
+    state: makeFakeState() as never,
+  })
+
+  const records = readAuditLog()
+  const phaseA = records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_A)
+  const phaseB = records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_B)
+
+  expect(phaseB).toBeDefined()
+
+  // sessionStartedAt must be present and non-empty
+  const sessionStartedAt = phaseB!['sessionStartedAt']
+  expect(typeof sessionStartedAt).toBe('string')
+  expect((sessionStartedAt as string).length).toBeGreaterThan(0)
+
+  // Must be parseable as ISO 8601
+  const parsed = Date.parse(sessionStartedAt as string)
+  expect(isNaN(parsed)).toBe(false)
+
+  // Must strictly follow Phase A invocationTimestamp (broker start is after Phase A is written).
+  // The L1 harness enforces strict <; equality is rejected.
+  const invocationTimestamp = phaseA!['invocationTimestamp']
+  expect(typeof invocationTimestamp).toBe('string')
+  const tsA = Date.parse(invocationTimestamp as string)
+  expect(isNaN(tsA)).toBe(false)
+  expect(parsed).toBeGreaterThan(tsA)
+})
+
+// ── T40: Same-millisecond clock freeze — bounded yielding repair guarantees strict ordering ─
+//
+// Reproduces the condition where Date.now() returns the same value as the parsed
+// Phase A invocationTimestamp for several iterations (simulating a frozen-clock
+// same-millisecond scenario). Proves the bounded yielding repair exits only when
+// the real clock has advanced, and that Phase B sessionStartedAt is strictly
+// after Phase A invocationTimestamp.
+
+test('T40 — spin-loop repair resolves same-millisecond clock freeze: sessionStartedAt strictly after invocationTimestamp', async () => {
+  const { contentHash } = await makePromotedSkill('test-skill-t40')
+  vi.mocked(loadProjectContract).mockReturnValue(makeFakeContract() as never)
+  vi.mocked(buildPilotSnapshot).mockReturnValue(makeFakeSnapshot(os.tmpdir()) as never)
+  vi.mocked(verifySourceUnchanged).mockReturnValue({ sourceUnmodified: true, changedFiles: [], missingFiles: [], newFiles: [] })
+  vi.mocked(runProjectPilotBrokerSession).mockResolvedValue(makeBrokerResult() as never)
+
+  // Capture a baseline time. Date.now() is mocked to return this value for
+  // the first several calls (simulating the clock being frozen at the same
+  // millisecond as invocationTimestamp), then to return baseline + 1000 so
+  // the spin loop exits with a value guaranteed to be > any invocationTimestamp
+  // captured by new Date().toISOString() during the same synchronous window.
+  const baseline = Date.now()
+  let nowCallCount = 0
+  const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+    nowCallCount++
+    return nowCallCount <= 10 ? baseline : baseline + 1000
+  })
+
+  try {
+    await runSkillGuidedSanitizedProjectPilot({
+      skillRequest: { skillId: 'test-skill-t40', expectedHash: contentHash },
+      pilotSourcePath: '/fake/path',
+      controlClient: {} as never,
+      state: makeFakeState() as never,
+    })
+  } finally {
+    nowSpy.mockRestore()
+  }
+
+  const records = readAuditLog()
+  const phaseA = records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_A)
+  const phaseB = records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_B)
+
+  expect(phaseA).toBeDefined()
+  expect(phaseB).toBeDefined()
+
+  const tsA = Date.parse(phaseA!['invocationTimestamp'] as string)
+  const tsB = Date.parse(phaseB!['sessionStartedAt'] as string)
+  expect(isNaN(tsA)).toBe(false)
+  expect(isNaN(tsB)).toBe(false)
+
+  // Bounded yielding repair must ensure strict ordering even when the clock was frozen
+  expect(tsB).toBeGreaterThan(tsA)
+})
+
+// ── T41: Frozen wall clock — monotonic timeout fires; broker never called ─────
+//
+// Date.now() never advances past Phase A.  performance.now() is mocked to
+// simulate the monotonic budget expiring immediately on the first elapsed check.
+// Proves: the production writer throws SESSION_START_TIMESTAMP_TIMEOUT before
+// the broker mock is called, and no Phase B record with a false sessionStartedAt
+// is written.
+
+test('T41 — frozen wall clock: monotonic budget exhausted before broker; no Phase B written', async () => {
+  const { contentHash } = await makePromotedSkill('test-skill-t41')
+  vi.mocked(loadProjectContract).mockReturnValue(makeFakeContract() as never)
+  vi.mocked(buildPilotSnapshot).mockReturnValue(makeFakeSnapshot(os.tmpdir()) as never)
+  vi.mocked(verifySourceUnchanged).mockReturnValue({ sourceUnmodified: true, changedFiles: [], missingFiles: [], newFiles: [] })
+
+  // Date.now() frozen 1 second before current real time — always <= tsA
+  const frozenTime = Date.now() - 1000
+  const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(frozenTime)
+
+  // performance.now(): first call (budgetStart) returns 0; second call (elapsed check)
+  // returns a value that exceeds the timeout budget, causing immediate expiry.
+  let perfCallCount = 0
+  const perfSpy = vi.spyOn(performance, 'now').mockImplementation(() => {
+    perfCallCount++
+    return perfCallCount === 1 ? 0 : 1_000_000
+  })
+
+  try {
+    await expect(
+      runSkillGuidedSanitizedProjectPilot({
+        skillRequest: { skillId: 'test-skill-t41', expectedHash: contentHash },
+        pilotSourcePath: '/fake/path',
+        controlClient: {} as never,
+        state: makeFakeState() as never,
+      })
+    ).rejects.toMatchObject({ code: 'SESSION_START_TIMESTAMP_TIMEOUT' })
+  } finally {
+    nowSpy.mockRestore()
+    perfSpy.mockRestore()
+  }
+
+  // Broker must not have been called — no broker invocation before evidence
+  expect(vi.mocked(runProjectPilotBrokerSession)).not.toHaveBeenCalled()
+
+  // Phase A was written (pre-temporal-capture step) but no Phase B record exists
+  const records = readAuditLog()
+  expect(records.some(r => r['phase'] === SKILL_INVOCATION_PHASE_A)).toBe(true)
+  expect(records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_B)).toBeUndefined()
+})
+
+// ── T42: Wall clock regression — monotonic timeout still terminates; broker not called ─
+//
+// Date.now() returns a value explicitly below the real current time (regression).
+// performance.now() is mocked to expire the budget, proving the monotonic timeout
+// is independent of wall-clock direction.
+
+test('T42 — wall clock regression: monotonic budget terminates wait; broker not called', async () => {
+  const { contentHash } = await makePromotedSkill('test-skill-t42')
+  vi.mocked(loadProjectContract).mockReturnValue(makeFakeContract() as never)
+  vi.mocked(buildPilotSnapshot).mockReturnValue(makeFakeSnapshot(os.tmpdir()) as never)
+  vi.mocked(verifySourceUnchanged).mockReturnValue({ sourceUnmodified: true, changedFiles: [], missingFiles: [], newFiles: [] })
+
+  // Date.now() returns a value 5 seconds in the past — regressed behind invocationTimestamp
+  const regressedTime = Date.now() - 5000
+  const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(regressedTime)
+
+  let perfCallCount = 0
+  const perfSpy = vi.spyOn(performance, 'now').mockImplementation(() => {
+    perfCallCount++
+    return perfCallCount === 1 ? 0 : 1_000_000
+  })
+
+  try {
+    await expect(
+      runSkillGuidedSanitizedProjectPilot({
+        skillRequest: { skillId: 'test-skill-t42', expectedHash: contentHash },
+        pilotSourcePath: '/fake/path',
+        controlClient: {} as never,
+        state: makeFakeState() as never,
+      })
+    ).rejects.toMatchObject({ code: 'SESSION_START_TIMESTAMP_TIMEOUT' })
+  } finally {
+    nowSpy.mockRestore()
+    perfSpy.mockRestore()
+  }
+
+  expect(vi.mocked(runProjectPilotBrokerSession)).not.toHaveBeenCalled()
+
+  const records = readAuditLog()
+  expect(records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_B)).toBeUndefined()
 })

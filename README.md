@@ -1,12 +1,49 @@
-# Powerplant
+# Claude Powerplant
 
-**Powerplant lets Claude produce tested patches from sanitized project snapshots without touching your working repository, inheriting your secrets, or receiving unrestricted execution authority.**
-
-Version: v0.1 (contract-driven engine)
+Claude Powerplant is a trust-bounded skill lifecycle and acceptance harness for agent-assisted project work. It is designed to separate candidate workspaces from real project state, evaluate candidate changes inside controlled boundaries, and record evidence sufficient to support or reject bounded acceptance claims.
 
 ---
 
-## What it does
+## Current Verified Status
+
+> Stage 2B L1 completed one bounded live acceptance run under a documented trusted-directory assumption.
+
+Supporting evidence:
+
+- One production L1 live invocation was executed; no retry occurred
+- L0-generated receipt and isolated promoted registry remained consistent during the operator-controlled bootstrap-to-L1 handoff
+- Strict temporal ordering evidence passed
+- `builtinToolUseCount === 0` was observed for the live run
+- Candidate work remained in a sanitized workspace
+- Real-project manifest evidence remained unchanged
+- Oracle evaluation ran in a network-isolated, read-only Docker capsule and passed its required vectors
+- Sanitized acceptance evidence is recorded in `docs/acceptance/STAGE_2B_L1_LIVE_ACCEPTANCE_REPORT.md`
+
+> This acceptance does not claim cryptographic resistance to pre-run receipt-and-registry co-substitution by an actor with write access to the operator-controlled acceptance directory.
+
+---
+
+## What Is Not Yet Claimed
+
+This project does not yet claim:
+
+- Cryptographic resistance to a malicious operator controlling the acceptance directory
+- Completion of L2–L7
+- General production readiness of all trust-kernel surfaces
+- Clean removal of older runtime metadata from already-public Git history
+
+---
+
+## Validation / Test Status
+
+- Local configured checkout: `1042/1042` tests passing, typecheck clean
+- Clean checkout without external pilot-source configuration: repository-contained tests pass; pilot-dependent integration tests are conditionally skipped when `SPRINT4A_PILOT_SOURCE_PATH` is unset
+- Normal validation commands: `npm test` and `npx tsc --noEmit`
+- Pilot-integration coverage requires `SPRINT4A_PILOT_SOURCE_PATH` set to the external pilot project directory; see `.env.example`
+
+---
+
+## What It Does
 
 Powerplant runs Claude against a disposable, sanitized copy of a project. Claude operates exclusively through five typed custom tools — it cannot browse the web, run arbitrary shell commands, or read files outside the allowed set. The original project is never modified. The result is a `PATCH.diff` and an evidence bundle you review manually before deciding whether to apply the patch.
 
@@ -16,25 +53,13 @@ powerplant run [--yes] <project-path> "<task>"
 powerplant review <run-id>
 ```
 
----
-
-## Three commands
-
 ### `powerplant inspect <project-path>`
 
 Shows what Claude would be allowed to read, modify, and run — before starting any session. No API call is made. Writes a signed inspection report to `~/.powerplant/inspections/`.
 
-```bash
-powerplant inspect /path/to/safe-project
-```
-
 ### `powerplant run [--yes] <project-path> "<task>"`
 
 Runs Claude on a sanitized copy of the project. Claude implements the task using only typed project tools, verifies its work by running the allowed test check, and returns a patch package. The `--yes` flag skips the confirmation prompt.
-
-```bash
-powerplant run --yes /path/to/safe-project "Add input validation and deterministic tests."
-```
 
 On completion you receive:
 - A run ID (e.g. `pp-run-1779966263586`)
@@ -47,13 +72,11 @@ On completion you receive:
 
 Displays the full evidence bundle for a run: task, changed files, verification result, security summary, and (when present) the prompt envelope showing what was actually sent to Claude.
 
-```bash
-powerplant review pp-run-1779966263586
-```
-
 ---
 
-## v0.1 safety boundary
+## Stage 2B L1 Accepted Safety Boundary
+
+These properties describe the bounded Stage 2B L1 accepted execution path; they are not claims about every historical prototype or future stage.
 
 | Property | Status |
 |---|---|
@@ -64,20 +87,20 @@ powerplant review pp-run-1779966263586
 | Credentials passed to executor | None |
 | Patch auto-applied | Never |
 
-Every run is verified and recorded. `SESSION_SUMMARY.json` carries the containment flags. `PROMPT_ENVELOPE.json` carries the exact message sent to the model, its SHA-256 hash, model ID, and protocol version — so runs are reproducible.
+Every run is verified and recorded. `SESSION_SUMMARY.json` carries the containment flags. `PROMPT_ENVELOPE.json` carries the exact message sent to the model, its SHA-256 hash, model ID, and protocol version.
 
 ---
 
-## Supported project profile for v0.1
+## Supported Project Profile
 
-Powerplant v0.1 is appropriate for projects that meet all of the following:
+Powerplant is appropriate for projects that meet all of the following:
 
 - Small (a few source files), no live secrets or API keys in source
 - Has a `.powerplant/` contract folder declaring allowed read/write/check paths
 - Uses `node --test` or a similar sandboxed test runner for verification
 - Owned by you and not connected to production systems, payments, or live databases
 
-**Not appropriate for v0.1:**
+**Not appropriate:**
 - Repos containing API keys, database credentials, or deployment config
 - Projects connected to live trading, payments, or user data
 - Monorepos or large projects with complex build chains
@@ -85,36 +108,36 @@ Powerplant v0.1 is appropriate for projects that meet all of the following:
 
 ---
 
-## First use
+## First Use
 
 ### 1. Give a project a `.powerplant/` contract
 
-Create `.powerplant/POLICY.yaml` and `.powerplant/VERIFY.yaml` in your project. Both files are **required and operative** — Powerplant reads and enforces them. A YAML file that exists but does not match the expected schema fails closed before any snapshot is built.
+Create `.powerplant/POLICY.yaml` and `.powerplant/VERIFY.yaml` in your project. Both files are required and operative.
 
 **POLICY.yaml** — declares what Claude may see and change:
 
 ```yaml
 projectId: my-project
 
-includePaths:       # files copied into the sanitized snapshot
+includePaths:
   - package.json
   - src/engine/**
   - .powerplant/**
 
-excludePaths:       # files that must never enter the snapshot
+excludePaths:
   - .env
   - src-tauri/**
   - dist/**
 
-denyIfPresentAfterCopy:   # snapshot validation canaries
+denyIfPresentAfterCopy:
   - .env
   - credentials.json
 
-allowedReadPaths:   # files Claude may request via project_read_file
+allowedReadPaths:
   - package.json
   - src/engine/**
 
-allowedWritePaths:  # files Claude may write (disposable workspace only)
+allowedWritePaths:
   - src/engine/tests/**
 ```
 
@@ -134,8 +157,6 @@ Hard-coded invariants the YAML cannot override: `workspaceMode: sanitized_copy_o
 powerplant inspect /path/to/safe-project
 ```
 
-Read the output. Confirm the file disclosure set is acceptable.
-
 ### 3. Run one task
 
 ```bash
@@ -147,7 +168,6 @@ powerplant run --yes /path/to/safe-project \
 
 ```bash
 powerplant review <run-id>
-
 cat ~/.powerplant/runs/<project-id>/<run-id>/PATCH.diff
 ```
 
@@ -157,13 +177,13 @@ Copy the changes yourself. Powerplant proposes; you decide.
 
 ---
 
-## Run artifacts
+## Run Artifacts
 
 Every run produces a bundle at `~/.powerplant/runs/<project-id>/<run-id>/`:
 
 | File | Purpose |
 |---|---|
-| `TASK.md` | Clean developer request (no internal protocol text) |
+| `TASK.md` | Clean developer request |
 | `PROMPT_ENVELOPE.json` | Exact message sent to Claude, SHA-256 hash, model ID, protocol version |
 | `PATCH.diff` | Proposed changes as a unified diff |
 | `CHANGED_FILES.md` | List of files modified by Claude |
@@ -195,17 +215,39 @@ npm run typecheck
 npm test
 ```
 
-400 tests. Clean typecheck. No network calls in the test suite.
+CI runs `npm test` and `npx tsc --noEmit` from a clean checkout on every push and pull request to `master`/`main`. No `.env` file is present in CI; pilot-dependent integration tests are automatically skipped when `SPRINT4A_PILOT_SOURCE_PATH` is unset (see `.env.example`).
 
 ---
 
-## What Powerplant does not do in v0.1
+## Documentation Map
+
+| Document | Purpose | Authority |
+|---|---|---|
+| `README.md` | Public orientation and current verified status | Public summary only |
+| `docs/BUILD_LOG.md` | Chronological engineering journal and work trail | Non-normative |
+| `docs/architecture/Stage 2B Completion and GitHub Release Ledger.md` | Formal gate status and trust-boundary record | Canonical stage-status authority |
+| `docs/acceptance/STAGE_2B_L1_LIVE_ACCEPTANCE_REPORT.md` | Sanitized record of the accepted bounded live run | Canonical acceptance evidence |
+| `docs/architecture/POWERPLANT_TRUST_KERNEL_V0_2_ROADMAP.md` | Deferred milestone and incident-lessons design notes | Non-normative design record |
+
+---
+
+## Security / Public History Note
+
+Current tracked files have been sanitized of identified live runtime identifiers and operator-local paths. Earlier non-credential runtime metadata remains in already-public Git history; no history rewrite has been performed.
+
+---
+
+## What Powerplant Does Not Do
 
 - Apply patches automatically
 - Integrate with GitHub or any CI system
 - Support arbitrary build systems or languages beyond the pilot contract
 - Mount real project directories into the executor
 - Support multi-agent workflows
-- Provide a dashboard or web UI
-- Integrate with `poly/` or any trading system
-- Claim to be safe for sensitive enterprise repositories
+- Claim L2–L7 completion or overall production readiness of the trust kernel
+
+---
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

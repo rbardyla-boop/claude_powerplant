@@ -1,4 +1,43 @@
-# Build Log
+# BUILD LOG — Claude Powerplant Engineering Journal
+
+## Purpose
+
+`docs/BUILD_LOG.md` is the ongoing chronological engineering journal for shipped work, investigations, failed approaches, accepted repairs, and next authorized actions. It is intended to preserve the reasoning trail without rewriting history.
+
+## Authority Boundary
+
+This document is **non-normative**.
+- For completion status, the [Release Ledger](architecture/Stage%202B%20Completion%20and%20GitHub%20Release%20Ledger.md) controls.
+- For acceptance evidence, the [Stage 2B L1 Acceptance Report](acceptance/STAGE_2B_L1_LIVE_ACCEPTANCE_REPORT.md) controls.
+- For code truth, committed tests and implementation control.
+- If this log conflicts with those sources, the authoritative source wins; correct this log in a later entry rather than silently rewriting it.
+
+## Entry Discipline
+
+Every material project task should append one short entry containing:
+- Date, branch, and ending commit hash
+- Objective
+- Files/surfaces changed
+- Validation result
+- Accepted claim or blocker
+- Next authorized action
+
+## Safety Discipline
+
+Do **not** record:
+- Live session identifiers
+- API keys, environment values, or credentials
+- Raw external transcripts
+- Absolute operator-local paths
+- Unsanitized runtime artifacts
+
+Use redaction tokens such as:
+- `[REDACTED_LIVE_SESSION_ID]`
+- `[REDACTED_LIVE_AGENT_ID]`
+- `[REDACTED_LIVE_ENVIRONMENT_ID]`
+- `[REDACTED_LOCAL_PATH]`
+
+---
 
 ## Sprint 0 — Config + Contracts
 
@@ -517,7 +556,7 @@ What Sprint 3T does NOT prove:
 **Date:** 2026-05-28  
 **Goal:** Instrument the SDK `EnvironmentWorker` bash subprocess to determine (a) which env vars are visible to bash-tool subprocesses, and (b) whether bash can reach an arbitrary local HTTP endpoint. Three credential probes (K1/K2/K3) + one egress probe (E1) + one output-path probe (O1).
 
-**Agent:** `agent_013W2nbHA3z1VEGAG13853is` (Sprint 3U boundary diagnostic, bash-only, always_allow, haiku model)  
+**Agent:** `[REDACTED_LIVE_AGENT_ID]` (Sprint 3U boundary diagnostic, bash-only, always_allow, haiku model)  
 **Report:** `.powerplant/reports/sprint3u-boundary-2026-05-28T00-04-02-504Z.json`
 
 ### Live probe results
@@ -721,7 +760,7 @@ The host creates the output directory as the host user (e.g., uid 1000). The con
 after `mkdirSync` in `runIsolatedExecutor`, before Docker is launched.
 
 **Bug 8 — Stale Sprint 1A environment state causes 404 (FIXED):**
-The Sprint 1A cloud environment (`env_011EQX7YyqAt2F7MQRRDfXGd`) had been deleted on the Anthropic
+The Sprint 1A cloud environment (`[REDACTED_LIVE_ENVIRONMENT_ID]`) had been deleted on the Anthropic
 platform since it was provisioned on 2026-05-26. The provision code reuses the stored state without
 verifying the resource exists, so session creation returned 404. Fixed operationally: deleted stale
 state files (`.powerplant/state/cloud-smoke.json`, `.powerplant/state/sprint3v-executor-probe.json`)
@@ -747,8 +786,8 @@ and re-provisioned both.
 
 | Field | Value |
 |-------|-------|
-| Agent | `agent_01PjWjAATvFJDox4kvX7cfGH` |
-| Session | `sesn_01LY47xPdjmHuEV44myhAVbF` |
+| Agent | `[REDACTED_LIVE_AGENT_ID]` |
+| Session | `[REDACTED_LIVE_SESSION_ID]` |
 | `customToolUseCount` | `1` ✓ |
 | `builtinToolUseCount` | `0` ✓ |
 | `finalResponseCorrect` | `true` ✓ |
@@ -800,7 +839,7 @@ and fixed verification — without modifying or mounting the source project.
 
 ### Completion checklist
 
-- [x] External pilot project created at `/home/thebackhand/Downloads/grok/powerplant_pilot_status/`
+- [x] External pilot project created at `[REDACTED_LOCAL_PATH]/`
 - [x] Pilot contains forbidden canary files (`.env`, `private/secret.txt`, `deployment/release.txt`)
 - [x] `SPRINT4A_PILOT_CONTRACT` defined in `src/contracts/project-pilot-contract.ts`
 - [x] Five custom tool Zod schemas in `src/contracts/project-tool-contracts.ts`
@@ -822,7 +861,7 @@ and fixed verification — without modifying or mounting the source project.
 
 ### Key proof points when live run passes
 
-- External pilot is outside Powerplant — path: `/home/thebackhand/Downloads/grok/powerplant_pilot_status/`
+- External pilot is outside Powerplant — path: `[REDACTED_LOCAL_PATH]/`
 - Pilot contains forbidden canaries before sanitization: YES
 - Canaries absent from sanitized workspace: YES
 - Original source project mounted: NO
@@ -898,3 +937,405 @@ would have created a false safety boundary. Work stopped immediately.
 
 **Next step:** Create Singularity Inc. `.powerplant/` contract (narrow QA-only scope),
 run `powerplant inspect` against it, confirm no pilot paths appear in the disclosure.
+
+---
+
+## Gate 6 — Public Release Sanitation (Stage 2B)
+
+**Date:** 2026-05-29
+**Branch:** feat/stage2b-preflight
+**Objective:** Sanitize current release surface and establish public documentation.
+
+**Gate 6A finding:** No API credentials or private keys found. Real live runtime identifiers and operator-local absolute paths were discovered in already-public tracked files and Git history.
+
+**Gate 6B1 forward sanitation:** Identified runtime metadata removed or redacted from the current tracked tree. Operator-local paths removed from configuration and source. Precise `.gitignore` recurrence-prevention rules added. Empty-path filesystem fallback replaced with explicit fail-closed resolver. Pilot-dependent tests made conditionally skippable in clean-checkout environments.
+
+**Gate 6B2A documentation:** README updated with accurate verified status and explicit claim boundaries. Build log policy established. Release ledger aligned.
+
+**Validation:** 1042/1042 tests passing (local configured checkout); 1002 passing + 40 conditionally skipped (clean checkout without pilot source); typecheck clean.
+
+**Historical exposure:** Earlier non-credential runtime metadata (live session IDs, agent IDs, environment IDs, operator-local paths) remains in already-public Git history. No history rewrite has been performed. Any such decision requires separate explicit authorization.
+
+**Next authorized action:** Gate 6B2B — CI configuration, SECURITY.md, GitHub branch protection, secret scanning, license verification, and optional history-rewrite decision.
+
+---
+
+## Gate 6B2A Correction — Public Documentation Split-Brain Elimination
+
+**Date:** 2026-05-29
+**Branch:** `feat/stage2b-preflight`
+
+**Objective:** Eliminate public-documentation split-brain before release hardening. Two competing journals existed (root `BUILDLOG.md` and `docs/BUILD_LOG.md`); the release ledger referenced the stale root copy; ledger "Current Checkpoint" still claimed no live run had occurred; Public Claim Boundary and Completion Condition sections used overclaim language (`immutable fixture binding`, `sanitized immutable evidence`); README Safety Boundary section was not scoped to the accepted Stage 2B L1 path.
+
+**Surfaces changed:**
+
+- Root `BUILDLOG.md` deleted: single-session repair note whose "next steps" had already been completed; stale duplicate of `docs/BUILD_LOG.md`.
+- `docs/architecture/Stage 2B Completion and GitHub Release Ledger.md`:
+  - `## BUILDLOG.md Authorization` section renamed `## Engineering Journal Authorization`; reference updated from root `BUILDLOG.md` to `docs/BUILD_LOG.md`; retirement of root `BUILDLOG.md` recorded.
+  - Gate 4 end-of-section reference updated from `BUILDLOG.md` to `docs/BUILD_LOG.md`.
+  - Current Checkpoint section: removed stale "Live Anthropic/API call: not yet authorized", "Live L1 session: not yet executed", and `36b9efc` accepted-HEAD line; replaced with current milestone statement.
+  - Public Claim Boundary "After" clause: replaced `immutable fixture binding` with accepted trusted-directory language.
+  - Completion Condition: replaced `sanitized immutable evidence` with `sanitized evidence under the documented trusted-directory assumption`.
+- `README.md`: `## Safety Boundary` renamed `## Stage 2B L1 Accepted Safety Boundary`; qualifying sentence added before the property table scoping the claims to the bounded Stage 2B L1 accepted execution path.
+
+**Validation result:** `npm test` and `npx tsc --noEmit` pass (no source changes). Sanitation scans: no `immutable fixture binding`, no `sanitized immutable evidence`, no stale no-live-execution language in ledger. Root `BUILDLOG.md` absent. `docs/BUILD_LOG.md` is the sole journal referenced in the ledger and README.
+
+**Accepted claim:** One canonical engineering journal now exists (`docs/BUILD_LOG.md`). Public claim language in the ledger and README matches the accepted trusted-directory boundary. No overclaims remain in public-facing documentation.
+
+**Next authorized action:** Gate 6B2B — CI workflow, restricted `.env` loading review, `SECURITY.md`, license verification, GitHub branch protection, secret scanning and push protection, and optional separate history-rewrite decision.
+
+---
+
+## Gate 6B2B — CI, Environment Safety, and Security Policy Hardening
+
+**Date:** 2026-05-29
+**Branch:** `feat/stage2b-preflight`
+
+**Objective:** Complete pre-push repository hardening: restrict Vitest env loading, add CI, add security policy, verify license status, and record final pre-push state.
+
+**Part 1 — Local commit inventory:**
+Branch HEAD = `origin/feat/stage2b-preflight` at start of this gate (zero local commits ahead). All prior Gate 6B1/6B2A commits were already on the remote. `882fdf7` is a Gate 6B2A commit ("establish maintained build log and align release status") confirmed present on origin.
+
+**Part 2 — Surface inspection findings:**
+
+| Surface | Finding |
+|---|---|
+| CI workflow | Absent — `.github/workflows/` directory did not exist |
+| Node version pin | Absent — no `.nvmrc`, `.node-version`, or `engines` field |
+| `SECURITY.md` | Absent |
+| License | Absent — `PUBLIC_RELEASE_LICENSE_DECISION_REQUIRED` |
+| `vitest.config.ts` `.env` loading | Broad empty-prefix `loadEnv('test', cwd, '')` — all `.env` vars including `ANTHROPIC_API_KEY` injected into test process |
+| `package-lock.json` | Present, lockfileVersion 3, tracked in git |
+
+**Actions taken:**
+
+- `vitest.config.ts`: narrowed `loadEnv` prefix from `''` to `'SPRINT4A_'`. Only `SPRINT4A_*` env vars are injected into the test process. `ANTHROPIC_API_KEY` and other credentials are no longer reachable via Vitest injection. Proof: `1042/1042` tests pass locally; clean checkout without `.env` passes `1002/1042` with 40 correctly skipped (pilot-dependent suites).
+- `.node-version`: added, pins Node 20.
+- `.github/workflows/ci.yml`: added clean-checkout CI workflow. Runs on push/PR to `master`/`main`; uses `actions/checkout@v4`, `actions/setup-node@v4` with `node-version-file: '.node-version'`; `npm ci`, `npx tsc --noEmit`, `npm test`; no secrets injected; live tests excluded by `vitest.config.ts`; pilot-integration tests skip automatically when `SPRINT4A_PILOT_SOURCE_PATH` is absent.
+- `SECURITY.md`: added at repo root. Covers: containment escape, credential leakage, evidence/receipt forgery, trusted-directory bypass, unintended live agent execution. Reports via GitHub private vulnerability reporting. Includes publication prerequisite: feature must be enabled in repository settings before policy is operative.
+- `README.md`: added one-line CI disclosure under Development section.
+- Release ledger Gate 6B2B section updated from PENDING to COMPLETE (pre-push local) with exact actions, remaining user-decisions, and repository-settings steps.
+
+**Validation:**
+
+- Current-checkout: `1042/1042` tests passing, typecheck clean.
+- Clean-checkout (no `.env`): `1002` passing, 40 skipped (pilot-dependent only), typecheck clean. `npm ci` succeeded from committed lockfile.
+
+**Accepted claim:** Vitest no longer injects credentials into the test environment. CI is configured for clean-checkout validation. `SECURITY.md` is in place pending private-reporting channel verification. No history rewrite performed. No live run executed.
+
+**Remaining user decisions before formal release:**
+
+- Select and add a `LICENSE` file.
+- Enable GitHub private vulnerability reporting in repository settings.
+- Enable GitHub branch protection and secret scanning in repository settings.
+- Optional: authorize history-rewrite decision for pre-Gate-6B1 historical exposure.
+
+**Next authorized action:** One normal forward push of the local Gate 6B2B commit stack after user review.
+
+---
+
+## Gate 6B2B Closure — Apache-2.0 License and Owner Decisions
+
+**Date:** 2026-05-29
+**Branch:** `feat/stage2b-preflight`
+
+**Objective:** Close the two remaining owner decisions from Gate 6B2B (license selection and
+GitHub Private Vulnerability Reporting) and prepare the local commit for forward push.
+
+**Actions taken:**
+
+- **License selected and added:** Repository owner selected Apache License 2.0. `LICENSE` created
+  with the unmodified Apache License, Version 2.0 text (standard ASF form; no paraphrasing, no
+  added legal notice, no restrictions inconsistent with Apache-2.0).
+- **README updated:** `## License` section added referencing `LICENSE`.
+- **GitHub Private Vulnerability Reporting confirmed:** Repository owner confirmed that GitHub
+  Private Vulnerability Reporting is enabled in repository settings. `SECURITY.md` is now
+  operative through that private reporting channel.
+- **Gate 6B2B section in release ledger** updated from `COMPLETE (pre-push local)` to `CLOSED`
+  with factual entries for license addition and PVR confirmation.
+- **No production code, tests, or acceptance evidence modified.**
+
+**Validation:** Tests and typecheck unchanged from Gate 6B2B baseline (1042/1042 local;
+typecheck clean). No new runtime identifiers or credentials introduced. Worktree clean after commit.
+
+**Remaining open before formal release:**
+- Hosted CI run: pending push and verification (see Gate 6B2C).
+- GitHub branch protection: pending post-push configuration in repository settings.
+- Secret scanning and push protection: pending owner confirmation.
+- Optional: separate authorized history-rewrite decision.
+
+---
+
+## Gate 6B2C — CI Capsule Provisioning Failure Analysis and Actions Upgrade
+
+**Date:** 2026-05-29
+**Branch:** `feat/stage2b-preflight`
+
+**Objective:** Diagnose the observed GitHub Actions CI failure, determine the capsule
+trust-root case, implement the permitted atomic repair, and record the blocked state.
+
+**CI failure observed:**
+
+First hosted GitHub Actions run (`ubuntu-latest`) failed. P0-C and P0-E capsule tests emitted:
+
+```
+CAPSULE_IMAGE_IDENTITY_MISMATCH:
+expected sha256:f496aac93ff3459a5142f2e37aedb025c414f5a7244e299160ae82a3aa29ad48,
+got null (image not found).
+Execution refused before any candidate code runs.
+```
+
+Root cause: the CI workflow runs `npm test` without first building the capsule evaluator image.
+The P0-C/P0-E tests call `docker image inspect powerplant-evaluator:node-test-js-v1`; when the
+image is absent, `getActualCapsuleImageId()` returns `null`; execution is refused before any
+candidate code runs. The evaluator behaved correctly — this is a provisioning gap, not a
+test-design failure.
+
+**Capsule trust-root case: Case B — trust root is not CI-reproducible from a clean build.**
+
+Local audit: `docker build --no-cache -t powerplant-evaluator-test-rebuild:probe docker/capsule-v1/`
+produced `sha256:cc4ae15db26972b3772f0c91d5c84498c80e5e7d58c9ba04c4fa2522d785445e`.
+The pinned constant is `sha256:f496aac93ff3459a5142f2e37aedb025c414f5a7244e299160ae82a3aa29ad48`.
+
+These differ because `docker/capsule-v1/Dockerfile` pins `FROM node:20-bookworm` by mutable
+tag only. The `node:20-bookworm` tag has moved since the capsule identity baseline was
+established. A clean build on the current base produces a different layer hash.
+
+**Public branch reconciliation:** Confirmed via `git ls-tree` and `git cat-file` that the
+pushed branch is not stale relative to prior documentation reports:
+- Root `BUILDLOG.md` is absent ✓
+- `docs/BUILD_LOG.md` is present and is the sole journal ✓
+- `README.md` contains `## Stage 2B L1 Accepted Safety Boundary` (narrowed heading) ✓
+- `LICENSE` and `SECURITY.md` are tracked ✓
+- No prior documentation correction commits were omitted from the push ✓
+
+**Actions taken in Gate 6B2C:**
+
+- **Actions upgrade:** `actions/checkout@v4` → `@v6`, `actions/setup-node@v4` → `@v6` in
+  `.github/workflows/ci.yml`. Addresses GitHub Node.js 20 action-runtime deprecation warnings.
+  The project Node version is unchanged (governed by `.node-version: 20`).
+- **No capsule constant changed:** `CAPSULE_V1_EXPECTED_IMAGE_ID` in `src/config/constants.ts`
+  and `docker/capsule-v1/build-manifest.json` remain unchanged. Updating the pinned identity
+  without a new proof report would weaken the capsule trust boundary.
+- **No P0-C/P0-E tests weakened or skipped.** Capsule tests remain in `npm test`.
+
+**Blocked state:** CI will continue to fail on P0-C/P0-E until a new reviewed capsule
+baseline is established. Required repair (not authorized in this gate):
+1. Pin `docker/capsule-v1/Dockerfile` base image by immutable digest.
+2. Clean build → record new reproducible image ID.
+3. Add CI step to build and verify capsule image before `npm test`.
+4. Update `CAPSULE_V1_EXPECTED_IMAGE_ID` and `build-manifest.json`.
+5. Run full P0-C/P0-E suite locally; record new proof report.
+6. Commit as reviewed capsule baseline with explicit authorization.
+
+**Validation:** `npm test` (1042/1042 local with image present; typecheck clean).
+No new credentials, runtime identifiers, or paths introduced. Worktree clean after commit.
+
+**Next authorized action:** Reviewed forward push of Gate 6B2C commits; post-push:
+initiate capsule trust-root baseline review with explicit authorization.
+
+---
+
+## Gate 6B2C — Capsule Trust-Root Repair (Authorized)
+
+**Date:** 2026-05-29
+**Branch:** `feat/stage2b-preflight`
+
+**Authorization:** Repository owner confirmed the capsule trust-root repair should proceed
+on `feat/stage2b-preflight` before any merge to `master`.
+
+**Objective:** Pin the capsule Dockerfile base by immutable digest, establish a new
+reproducible capsule image identity, re-run the full P0-C/P0-E proof suite, and make
+CI capable of provisioning and verifying the exact trusted evaluator image.
+
+**Root cause summary:** `docker/capsule-v1/Dockerfile` used `FROM node:20-bookworm`
+(mutable tag). The `node:20-bookworm` tag moved after the original `sha256:f496aac9...`
+baseline was established. A clean rebuild on the current base produced `sha256:cc4ae15d...`
+(different from pinned). CI runners, starting with no pre-built image, correctly refused
+candidate execution when `getActualCapsuleImageId()` returned `null`.
+
+**Repair actions:**
+
+1. **Dockerfile base pinned by immutable digest:**
+   `docker/capsule-v1/Dockerfile` updated to:
+   ```
+   FROM node:20-bookworm@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5
+   ```
+   This digest was obtained by `docker pull node:20-bookworm` on 2026-05-29 and confirmed
+   via `docker image inspect node:20-bookworm --format '{{index .RepoDigests 0}}'`.
+
+2. **New capsule image identity baseline:**
+   Clean build (`docker build --no-cache -t powerplant-evaluator:node-test-js-v1 docker/capsule-v1/`)
+   produced:
+   ```
+   sha256:e76106374cf197074f855721173fd0c0b77265ec2c7a5372a9f39fa9b48ef0bc
+   ```
+   - `CAPSULE_V1_EXPECTED_IMAGE_ID` updated in `src/config/constants.ts`.
+   - `docker/capsule-v1/build-manifest.json` updated with new `imageId`, `baseImage`,
+     `baseImageDigest`, and updated `portabilityNote` explaining digest-pinned
+     reproducibility requirement.
+
+3. **Full P0-C/P0-E proof suite re-run against new baseline:**
+   - P0-C capsule suite: 14/14 tests pass (F1–F12 fixture controls + receipt structure +
+     terminal result `STAGE_2B_P0_C_CAPSULE_PROVEN`)
+   - P0-C oracle execution suite: 9/9 tests pass
+   - P0-E extended suite: 32/32 tests pass (F1–F16, including F5b direct-IP, F5c Docker
+     socket absence, F13–F15 result-forgery resistance, F16 image-identity mismatch)
+   Full test suite: 1042/1042 passing, typecheck clean.
+
+4. **CI workflow updated** (`add Build and verify capsule evaluator image` step):
+   Step runs before `npm test`; builds the image from the digest-pinned Dockerfile;
+   reads expected ID from `docker/capsule-v1/build-manifest.json`; fails immediately
+   on identity mismatch. Node.js 20 is available on `ubuntu-latest` for the JSON parse.
+
+5. **Release Ledger Gate 6B2C** updated from PARTIALLY BLOCKED to CLOSED.
+
+**Local validation:** 1042/1042 tests passing; typecheck clean. No new credentials, runtime
+identifiers, or operator-local paths introduced.
+
+**Status at commit `da7297e`:** Pushed to `feat/stage2b-preflight`. Hosted CI verification
+pending. See post-push failure analysis below.
+
+---
+
+## Gate 6B2C — Hosted CI Failure Post-Mortem and Registry Digest Migration (2026-05-29)
+
+**Triggered by:** GitHub Actions run on commit `da7297e` (push to `feat/stage2b-preflight`).
+
+**Failed step:** `Build and verify capsule evaluator image` — the first custom CI step.
+P0-C/P0-E tests were **not reached**.
+
+**Observed identity mismatch:**
+
+```
+Expected (locally recorded image .Id):
+  sha256:e76106374cf197074f855721173fd0c0b77265ec2c7a5372a9f39fa9b48ef0bc
+
+Actual (GitHub-hosted build image .Id):
+  sha256:f56124cd65299a19c56f1905b2847aec9ad6896fe5331aa932994deb88d3d5a6
+```
+
+**Root cause:** `docker image inspect --format '{{.Id}}'` returns the SHA-256 of the
+image config JSON. The config JSON embeds a build timestamp. Two independent `docker build`
+runs — even from byte-identical inputs with a digest-pinned base — produce different image
+IDs because the timestamp differs between builders. The base digest pin (`sha256:8f693eaa...`)
+resolved correctly; it is not the source of the divergence. The final image ID is not a
+portable cross-builder identity anchor.
+
+**Consequence:** The "rebuild-and-compare local image ID" CI trust-root design cannot pass
+reliably across independent runners. `CAPSULE_V1_EXPECTED_IMAGE_ID` must not be updated
+opportunistically to match whichever CI runner last built the image.
+
+**Required repair:** Migrate capsule trust root from a local-build image `.Id` to an
+immutable published registry digest on GitHub Container Registry (GHCR). The approved
+capsule image must be built once under review, pushed to GHCR, and its immutable digest
+recorded in the repository. CI must pull that exact digest rather than rebuilding.
+
+> Gate 6B2C remains open. The capsule base image is digest-pinned, but hosted CI
+> demonstrated that local Docker image IDs are not reproducible across independent
+> builders. Capsule trust-root migration to a canonical published registry digest is
+> required before hosted capsule proof can pass.
+
+**Phase A actions (this commit):**
+- Documentation corrected to reflect the actual hosted CI result.
+- Manual publication workflow added at `.github/workflows/publish-capsule-v1.yml` to
+  allow the repository owner to build and push the reviewed capsule image to GHCR and
+  capture its immutable registry digest.
+
+**Phase B actions (pending owner publication and authorization):**
+- Publish capsule image via `publish-capsule-v1.yml`; record the immutable GHCR digest.
+- Replace `CAPSULE_V1_EXPECTED_IMAGE_ID` with `CAPSULE_V1_EXPECTED_REPO_DIGEST` in
+  `src/config/constants.ts`.
+- Update `capsule-evaluator.ts` to verify the resolved registry digest instead of the
+  local image `.Id`.
+- Update `ci.yml` to pull the approved image by digest instead of rebuilding.
+- Update P0-E tests to assert registry-digest semantics.
+- Re-run full test suite; push; verify hosted CI green.
+- Gate 6B2C closes only after hosted P0-C/P0-E validation passes.
+
+**Next authorized action:** Repository owner runs `.github/workflows/publish-capsule-v1.yml`
+on `feat/stage2b-preflight` via `workflow_dispatch`; records the output canonical
+reference; authorizes Phase B implementation.
+
+---
+
+## Gate 6B2C Phase B — Registry Digest Migration (2026-05-29)
+
+**Branch:** `feat/stage2b-preflight`
+**Ending commits:** `95658f5` (trust root), `c02b7e3` (CI), `docs commit TBD`
+
+**Objective:** Implement the approved immutable GHCR registry digest as the sole active
+capsule trust root used by production evaluation and CI proof execution.
+
+**Approved canonical reference (owner-supplied, workflow run 26662894783):**
+```
+ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e
+```
+
+**Artifact pull verification (local):**
+- `docker pull` succeeded; digest confirmed present in resolved `RepoDigests`.
+
+**Files changed:**
+
+- `src/config/constants.ts`: `CAPSULE_V1_EXPECTED_REPO_DIGEST` added as canonical reference;
+  `CAPSULE_DOCKER_IMAGE` now equals it; `CAPSULE_V1_EXPECTED_IMAGE_ID` marked deprecated/retired.
+- `src/preflight/capsule-evaluator.ts`: `getActualCapsuleImageId`/`.Id` verification retired;
+  replaced by `getCapsuleRepoDigests` + `RepoDigests.includes(expectedCanonicalReference)`;
+  receipt emits `capsuleCanonicalReference`, `capsuleResolvedRepoDigests`, `capsuleRegistryDigestVerified`;
+  `capsuleImageIdentityVerified` retained as alias for l1-runner compatibility.
+- `docker/capsule-v1/build-manifest.json`: `registryDigest`, `publishedTag`,
+  `publicationWorkflowRunId`, `trustRootMechanism` added; `imageId` field marked as retired
+  with migration note.
+- `tests/preflight/p0-e-capsule-trust-root.test.ts`: Section 1 and F16 migrated to
+  registry-digest semantics; uses `getCapsuleRepoDigests` and `CAPSULE_V1_EXPECTED_REPO_DIGEST`.
+- `tests/l1-runner.test.ts`: mock `CapsuleEvaluatorReceipt` updated to match new interface.
+- `.github/workflows/ci.yml`: build step removed; pull step authenticates to GHCR and
+  verifies `RepoDigests` before `npm test`; `permissions: packages: read` added.
+- `.github/workflows/publish-capsule-v1.yml`: docker actions upgraded to
+  Node.js 24-compatible versions (login@v4, setup-buildx@v4, build-push@v7).
+
+**Validation result:** 1042/1042 tests passing; `npx tsc --noEmit` clean.
+P0-E trust-root tests pass under registry-digest semantics.
+P0-C passes against the approved GHCR artifact.
+
+**Accepted claim:**
+
+> Gate 6B2C Phase B implemented locally: the capsule trust root now uses the approved
+> immutable GHCR registry digest, and ordinary CI is configured to pull and verify that
+> exact artifact before running P0-C/P0-E. Hosted CI confirmation remains pending until
+> the implementation is pushed and the workflow passes.
+
+**Next authorized action:** Push `feat/stage2b-preflight`; confirm hosted CI green.
+Gate 6B2C closes only after hosted P0-C/P0-E tests pass against the GHCR-sourced artifact.
+
+---
+
+## Gate 6B2C Closeout — Hosted CI Confirmed (2026-05-29)
+
+**Branch:** `feat/stage2b-preflight`
+**Ending commit:** `28e942f` (`docs(release): record capsule registry-digest migration pending hosted proof`)
+
+**Objective:** Close Gate 6B2C after hosted GitHub Actions CI pulled and verified the
+approved immutable GHCR registry digest and passed the complete test/typecheck workflow.
+
+**Approved canonical GHCR reference:**
+```
+ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e
+```
+
+**Hosted CI receipt:**
+- Run: `26663770658` — conclusion: `success`
+- Triggering commit: `28e942f`
+- Workflow: CI
+- Step verified: "Pull approved capsule image by immutable registry digest" — success
+- "Test and typecheck" job: success
+
+**Accepted claim:**
+
+> Gate 6B2C closed after migration from non-portable local Docker image-ID verification
+> to an approved immutable GHCR registry-digest capsule trust root. Hosted GitHub Actions
+> CI pulled and verified the canonical capsule artifact and passed the complete
+> test/typecheck workflow on `feat/stage2b-preflight`.
+
+**Next authorized action:** Final PR from `feat/stage2b-preflight` into `master`.
+Merge only after PR checks pass. No release tag to be created as part of the PR.

@@ -158,7 +158,38 @@ export const SPRINT4A_STATE_PATH = '.powerplant/state/sprint4a-pilot.json' as co
 export const SPRINT4A_RUNTIME_BASE = '/tmp/powerplant-sprint4a' as const
 export const SPRINT4A_REPORTS_DIR = '.powerplant/reports' as const
 export const SPRINT4A_EXECUTOR_IMAGE = 'powerplant-executor:sprint4a' as const
-export const SPRINT4A_PILOT_SOURCE_PATH = '/home/thebackhand/Downloads/grok/powerplant_pilot_status' as const
+/**
+ * Resolve the Sprint 4A pilot source path from the environment.
+ *
+ * Throws at call time if SPRINT4A_PILOT_SOURCE_PATH is not set, preventing the
+ * empty-string-to-CWD ambiguity that occurs when path.resolve('') returns the
+ * current working directory.
+ */
+export function resolveSprint4aPilotSourcePath(): string {
+  const val = process.env['SPRINT4A_PILOT_SOURCE_PATH']
+  if (!val) {
+    throw new Error(
+      'SPRINT4A_PILOT_SOURCE_PATH is not set. ' +
+      'Set this environment variable to the absolute path of the pilot project. ' +
+      'For local development, add it to your .env file.',
+    )
+  }
+  return val
+}
+
+/**
+ * Sprint 4A pilot source path resolved at module load time.
+ *
+ * For contexts that need the path before a session starts (e.g. CLI entry points,
+ * vitest test setup). Will be an empty string when the env var is absent —
+ * callers that need a guaranteed non-empty path should call
+ * resolveSprint4aPilotSourcePath() directly instead of reading this constant.
+ *
+ * @deprecated Prefer resolveSprint4aPilotSourcePath() for any code path that
+ * would pass this value to loadProjectContract or any filesystem operation.
+ */
+export const SPRINT4A_PILOT_SOURCE_PATH: string =
+  process.env['SPRINT4A_PILOT_SOURCE_PATH'] ?? ''
 export const SPRINT4A_PILOT_PROJECT_ID = 'powerplant-pilot-status' as const
 export const SPRINT4A_FINAL_RESPONSE = 'SANITIZED PILOT PATCH COMPLETE' as const
 export const SPRINT4A_MAX_TOOL_CALLS = 30 as const
@@ -194,12 +225,18 @@ export const STAGE2B_PREFLIGHT_CONTROL_POLICY_VERSION = 'stage2b-preflight-v1' a
 export const STAGE2B_TOOL_POLICY_VERSION = 'stage2b-tool-policy-v1' as const
 
 // Stage 2B Preflight — capsule-v1 evaluator profile
-// Image identity is content-pinned: the evaluator verifies the actual image ID against
-// CAPSULE_V1_EXPECTED_IMAGE_ID before any candidate code runs. If the tag is reused with
-// a different image, execution is refused. See docker/capsule-v1/build-manifest.json.
+// Trust root (Phase B / Gate 6B2C-R): the evaluator verifies the capsule image by its
+// immutable GHCR registry digest. CI pulls this exact digest; it never rebuilds the image.
+// See docker/capsule-v1/build-manifest.json and docs/BUILD_LOG.md Gate 6B2C.
 export const STAGE2B_CAPSULE_EVALUATOR_PROFILE_ID = 'capsule-v1' as const
-export const CAPSULE_DOCKER_IMAGE = 'powerplant-evaluator:node-test-js-v1' as const
-export const CAPSULE_V1_EXPECTED_IMAGE_ID = 'sha256:f496aac93ff3459a5142f2e37aedb025c414f5a7244e299160ae82a3aa29ad48' as const
+export const CAPSULE_V1_EXPECTED_REPO_DIGEST =
+  'ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e' as const
+// CAPSULE_DOCKER_IMAGE is the canonical immutable reference used for both execution and
+// verification. The mutable tag (powerplant-evaluator:node-test-js-v1) is retired.
+export const CAPSULE_DOCKER_IMAGE = CAPSULE_V1_EXPECTED_REPO_DIGEST
+/** @deprecated Retired by Gate 6B2C Phase B. Local Docker image .Id is not portable across
+ * independent builders. Active capsule trust root is CAPSULE_V1_EXPECTED_REPO_DIGEST. */
+export const CAPSULE_V1_EXPECTED_IMAGE_ID = 'sha256:e76106374cf197074f855721173fd0c0b77265ec2c7a5372a9f39fa9b48ef0bc' as const
 export const CAPSULE_ORACLE_MOUNT_TARGET = '/oracle' as const
 export const CAPSULE_WORKSPACE_MOUNT_TARGET = '/workspace' as const
 export const CAPSULE_OUTPUT_MOUNT_TARGET = '/output' as const

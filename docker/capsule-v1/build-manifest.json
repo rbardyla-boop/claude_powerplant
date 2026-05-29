@@ -1,11 +1,21 @@
 {
   "profile": "capsule-v1",
-  "imageTag": "powerplant-evaluator:node-test-js-v1",
-  "imageId": "sha256:f496aac93ff3459a5142f2e37aedb025c414f5a7244e299160ae82a3aa29ad48",
-  "baseImage": "node:20-bookworm",
+  "publishedTag": "ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1:node-test-js-v1.0.0",
+  "registryDigest": "ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e",
+  "publicationWorkflowRunId": "26662894783",
+  "trustRootMechanism": "registryDigest",
+  "trustRootNote": "Phase B (Gate 6B2C-R): runtime and CI verification use the published registry digest above. The resolved RepoDigests from docker image inspect must contain registryDigest before any candidate code runs. The mutable tag is retained for human reference only.",
+  "baseImage": "node:20-bookworm@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5",
+  "baseImageTag": "node:20-bookworm",
+  "baseImageDigest": "sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5",
   "user": "ppeval",
   "workdir": "/workspace",
-  "portabilityNote": "imageId is content-pinned to the locally built image. This image has no RepoDigests (not pushed to a remote registry). To reproduce: docker build -t powerplant-evaluator:node-test-js-v1 docker/capsule-v1/ and verify the resulting image ID matches. If the ID differs, update CAPSULE_V1_EXPECTED_IMAGE_ID in src/config/constants.ts and re-run the P0-E suite.",
+  "retiredMechanism": {
+    "field": "imageId",
+    "retiredValue": "sha256:e76106374cf197074f855721173fd0c0b77265ec2c7a5372a9f39fa9b48ef0bc",
+    "retiredBy": "Gate 6B2C Phase B",
+    "reason": "Local Docker image .Id values are not portable across independent builders. A fresh GitHub-runner build produced a different final image .Id even with a digest-pinned base, because the image config JSON embeds a build timestamp. The registryDigest above is the sole active trust anchor."
+  },
   "securityProfile": {
     "network": "none",
     "rootfs": "read-only",

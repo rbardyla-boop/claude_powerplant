@@ -53,12 +53,12 @@ import { randomUUID } from 'crypto'
 import { computeOracleHash, ORACLE_SOURCE_PATH } from '../../src/preflight/oracle-bundle.js'
 import {
   runOracleInCapsule,
-  getActualCapsuleImageId,
+  getCapsuleRepoDigests,
 } from '../../src/preflight/capsule-evaluator.js'
 import type { CapsuleEvaluatorReceipt } from '../../src/preflight/capsule-evaluator.js'
 import {
   CAPSULE_DOCKER_IMAGE,
-  CAPSULE_V1_EXPECTED_IMAGE_ID,
+  CAPSULE_V1_EXPECTED_REPO_DIGEST,
   CAPSULE_PIDS_LIMIT,
   ORACLE_TRUSTED_RESULT_PREFIX,
 } from '../../src/config/constants.js'
@@ -103,7 +103,7 @@ async function runFixture(opts: {
   fixtureLabel: string
   timeoutMs?: number
   maxOutputBytes?: number
-  expectedImageId?: string
+  expectedCanonicalReference?: string
 }): Promise<CapsuleEvaluatorReceipt> {
   return runOracleInCapsule({
     bundleResult: bundle,
@@ -113,7 +113,7 @@ async function runFixture(opts: {
     baseDir: P0E_TEST_BASE,
     timeoutMs: opts.timeoutMs ?? 12000,
     maxOutputBytes: opts.maxOutputBytes ?? 65536,
-    expectedImageId: opts.expectedImageId,
+    expectedCanonicalReference: opts.expectedCanonicalReference,
   })
 }
 
@@ -133,40 +133,41 @@ export function summarizeChecks(_results) {
 }
 `.trim()
 
-// ── Section 1: Docker image identity verification ─────────────────────────────
+// ── Section 1: Registry digest trust root verification ───────────────────────
 
-describe('P0-E image identity: capsule image pinned and verified', () => {
-  it('actual image ID matches expected constant', () => {
-    const actual = getActualCapsuleImageId(CAPSULE_DOCKER_IMAGE)
-    expect(actual).toBe(CAPSULE_V1_EXPECTED_IMAGE_ID)
-    expect(actual).toMatch(/^sha256:[0-9a-f]{64}$/)
+describe('P0-E image identity: capsule registry digest verified', () => {
+  it('resolved RepoDigests contains the approved canonical reference', () => {
+    const digests = getCapsuleRepoDigests(CAPSULE_V1_EXPECTED_REPO_DIGEST)
+    expect(digests).not.toBeNull()
+    expect(digests).toContain(CAPSULE_V1_EXPECTED_REPO_DIGEST)
   })
 
-  it('runOracleInCapsule records image identity fields in receipt', async () => {
+  it('runOracleInCapsule records registry-digest trust root fields in receipt', async () => {
     const receipt = await runFixture({ fixtureContent: CORRECT_SUMMARIZE, fixtureLabel: 'img-identity-check' })
     expect(receipt.capsuleImageReference).toBe(CAPSULE_DOCKER_IMAGE)
-    expect(receipt.capsuleImageIdExpected).toBe(CAPSULE_V1_EXPECTED_IMAGE_ID)
-    expect(receipt.capsuleImageIdActual).toBe(CAPSULE_V1_EXPECTED_IMAGE_ID)
+    expect(receipt.capsuleCanonicalReference).toBe(CAPSULE_V1_EXPECTED_REPO_DIGEST)
+    expect(receipt.capsuleResolvedRepoDigests).toContain(CAPSULE_V1_EXPECTED_REPO_DIGEST)
+    expect(receipt.capsuleRegistryDigestVerified).toBe(true)
     expect(receipt.capsuleImageIdentityVerified).toBe(true)
     expect(receipt.verifiedControls).toContain('image_identity_verified')
   }, 30000)
 })
 
-// ── F16: Wrong capsule image identity ─────────────────────────────────────────
+// ── F16: Wrong expected registry digest → execution refused before candidate runs ─
 
-describe('P0-E F16: wrong expected image ID → execution refused before candidate runs', () => {
+describe('P0-E F16: wrong expected registry digest → execution refused before candidate runs', () => {
   it('runOracleInCapsule throws with CAPSULE_IMAGE_IDENTITY_MISMATCH before any Docker launch', async () => {
-    const fakeExpectedId = 'sha256:' + '0'.repeat(64)
+    const fakeExpectedRef = 'ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:' + '0'.repeat(64)
     await expect(
-      runFixture({ fixtureContent: CORRECT_SUMMARIZE, fixtureLabel: 'F16-wrong-image', expectedImageId: fakeExpectedId }),
+      runFixture({ fixtureContent: CORRECT_SUMMARIZE, fixtureLabel: 'F16-wrong-digest', expectedCanonicalReference: fakeExpectedRef }),
     ).rejects.toThrow('CAPSULE_IMAGE_IDENTITY_MISMATCH')
 
-    // Verify: error message names the expected vs actual IDs
+    // Verify: error message names the expected reference and the closed-execution reason
     try {
-      await runFixture({ fixtureContent: CORRECT_SUMMARIZE, fixtureLabel: 'F16-msg', expectedImageId: fakeExpectedId })
+      await runFixture({ fixtureContent: CORRECT_SUMMARIZE, fixtureLabel: 'F16-msg', expectedCanonicalReference: fakeExpectedRef })
     } catch (err) {
       const msg = String(err)
-      expect(msg).toContain(fakeExpectedId)
+      expect(msg).toContain(fakeExpectedRef)
       expect(msg).toContain('before any candidate code runs')
     }
   })
@@ -636,10 +637,11 @@ describe('P0-E receipt structure: all P0-E required fields present', () => {
     expect(receipt.workspacePayloadHash).toMatch(/^[0-9a-f]{64}$/)
     expect(receipt.controlPolicyVersion).toBe('stage2b-preflight-v1')
 
-    // Image identity (P0-E Task 2)
+    // Capsule image trust root (Phase B: registry-digest semantics)
     expect(receipt.capsuleImageReference).toBe(CAPSULE_DOCKER_IMAGE)
-    expect(receipt.capsuleImageIdExpected).toBe(CAPSULE_V1_EXPECTED_IMAGE_ID)
-    expect(receipt.capsuleImageIdActual).toMatch(/^sha256:[0-9a-f]{64}$/)
+    expect(receipt.capsuleCanonicalReference).toBe(CAPSULE_V1_EXPECTED_REPO_DIGEST)
+    expect(receipt.capsuleResolvedRepoDigests).toContain(CAPSULE_V1_EXPECTED_REPO_DIGEST)
+    expect(receipt.capsuleRegistryDigestVerified).toBe(true)
     expect(receipt.capsuleImageIdentityVerified).toBe(true)
 
     // Execution provenance (P0-E Task 6)

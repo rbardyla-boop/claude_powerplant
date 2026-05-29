@@ -5,9 +5,9 @@
  */
 import fs from 'fs'
 import path from 'path'
-import { SPRINT4A_PILOT_SOURCE_PATH } from '../config/constants.js'
+import { resolveSprint4aPilotSourcePath } from '../config/constants.js'
 
-const pilotPath = SPRINT4A_PILOT_SOURCE_PATH
+const pilotPath = resolveSprint4aPilotSourcePath()
 
 console.log()
 console.log('=== pilot:create — External Pilot Project Validator ===')

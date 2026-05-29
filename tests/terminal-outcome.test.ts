@@ -17,8 +17,10 @@ import { loadProjectContract } from '../src/projects/load-project-contract.js'
 import type { CheckResult } from '../src/contracts/verification-preflight-report.js'
 import type { RunClassification } from '../src/contracts/project-tool-contracts.js'
 import { printReviewReport } from '../src/cli/terminal-output.js'
+import { SPRINT4A_PILOT_SOURCE_PATH } from '../src/config/constants.js'
 
-const PILOT_SOURCE = '/home/thebackhand/Downloads/grok/powerplant_pilot_status'
+const PILOT_SOURCE = SPRINT4A_PILOT_SOURCE_PATH
+const PILOT_AVAILABLE = Boolean(PILOT_SOURCE) && fs.existsSync(PILOT_SOURCE)
 const FINAL_RESPONSE = 'SANITIZED PILOT PATCH COMPLETE'
 
 const passCheck: CheckResult = {
@@ -61,7 +63,7 @@ describe('Scenario 1: self-correcting run is fully eligible', () => {
   it('patchEligibleForApplication: true', () => {
     expect(evaluateTerminalRunOutcome(makeBaseOpts({ checkResults: [failCheck, passCheck] })).patchEligibleForApplication).toBe(true)
   })
-  it('SESSION_SUMMARY.passed is true with checksValidAfterLastWrite', async () => {
+  it.skipIf(!PILOT_AVAILABLE)('SESSION_SUMMARY.passed is true with checksValidAfterLastWrite', async () => {
     await withTempDir(async dir => {
       const contract = loadProjectContract(PILOT_SOURCE)
       const snapshot = buildPilotSnapshot(contract, path.join(dir, 'run'))
@@ -89,7 +91,7 @@ describe('Scenario 2: intermediate failures preserved in history', () => {
   it('finalCheckResult points to last (PASS) attempt', () => {
     expect(evaluateTerminalRunOutcome(makeBaseOpts({ checkResults: [failCheck, passCheck] })).finalCheckResult?.verdict).toBe('PASS')
   })
-  it('VERIFICATION_REPORT.md lists all check attempts', async () => {
+  it.skipIf(!PILOT_AVAILABLE)('VERIFICATION_REPORT.md lists all check attempts', async () => {
     await withTempDir(async dir => {
       const contract = loadProjectContract(PILOT_SOURCE)
       const snapshot = buildPilotSnapshot(contract, path.join(dir, 'run'))
@@ -145,7 +147,7 @@ describe('Scenario 5: zero-test integrity failure is ineligible', () => {
       finalizeReceived: false, patchPackagePresent: false,
     })).patchEligibleForApplication).toBe(false)
   })
-  it('SESSION_SUMMARY.passed is false when last check is integrity failure', async () => {
+  it.skipIf(!PILOT_AVAILABLE)('SESSION_SUMMARY.passed is false when last check is integrity failure', async () => {
     await withTempDir(async dir => {
       const contract = loadProjectContract(PILOT_SOURCE)
       const snapshot = buildPilotSnapshot(contract, path.join(dir, 'run'))
@@ -169,7 +171,7 @@ describe('Scenario 6: write after PASS invalidates eligibility', () => {
     expect(o.patchEligibleForApplication).toBe(false)
     expect(o.failureReason).toContain('invalidated by write')
   })
-  it('SESSION_SUMMARY.passed is false when checksValidAfterLastWrite is false', async () => {
+  it.skipIf(!PILOT_AVAILABLE)('SESSION_SUMMARY.passed is false when checksValidAfterLastWrite is false', async () => {
     await withTempDir(async dir => {
       const contract = loadProjectContract(PILOT_SOURCE)
       const snapshot = buildPilotSnapshot(contract, path.join(dir, 'run'))
@@ -281,7 +283,7 @@ describe('evaluateTerminalRunOutcome: edge cases', () => {
 
 // Backward compat — no checksValidAfterLastWrite
 describe('SESSION_SUMMARY.passed: backward compat', () => {
-  it('true when all results PASS (no override param)', async () => {
+  it.skipIf(!PILOT_AVAILABLE)('true when all results PASS (no override param)', async () => {
     await withTempDir(async dir => {
       const contract = loadProjectContract(PILOT_SOURCE)
       const snapshot = buildPilotSnapshot(contract, path.join(dir, 'run'))
@@ -294,7 +296,7 @@ describe('SESSION_SUMMARY.passed: backward compat', () => {
       expect(JSON.parse(fs.readFileSync(path.join(dir, 'patch', 'SESSION_SUMMARY.json'), 'utf-8')).passed).toBe(true)
     })
   })
-  it('false when checkResults null (no override param)', async () => {
+  it.skipIf(!PILOT_AVAILABLE)('false when checkResults null (no override param)', async () => {
     await withTempDir(async dir => {
       const contract = loadProjectContract(PILOT_SOURCE)
       const snapshot = buildPilotSnapshot(contract, path.join(dir, 'run'))

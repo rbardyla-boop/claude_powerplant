@@ -163,6 +163,50 @@ describe('read path authorization', () => {
   })
 })
 
+// ── builtinToolUseCount event-routing source invariants ──────────────────────
+//
+// Audit Question 2 — prove that the broker routes events correctly:
+//   - agent.tool_use (prohibited Anthropic built-in tools) increments builtinToolUseCount
+//   - agent.custom_tool_use (permitted project broker tools) does NOT
+// These are source-inspection tests; they do not require a live API session.
+
+describe('builtinToolUseCount event semantics — source invariants', () => {
+  let src: string
+
+  beforeAll(() => {
+    src = fs.readFileSync(path.resolve('src/broker/project-tool-broker.ts'), 'utf-8')
+  })
+
+  it('builtinToolUseCount is incremented exactly once in broker source', () => {
+    const increments = src.match(/builtinToolUseCount\+\+/g) ?? []
+    expect(increments).toHaveLength(1)
+  })
+
+  it('the single builtinToolUseCount increment is inside the agent.tool_use branch', () => {
+    const lines = src.split('\n')
+    const toolUseLineIdx = lines.findIndex(l => l.includes("event.type === 'agent.tool_use'"))
+    expect(toolUseLineIdx).toBeGreaterThan(-1)
+    const nextBranchIdx = lines.findIndex((l, i) => i > toolUseLineIdx && l.trimStart().startsWith('} else'))
+    const branchLines = lines.slice(toolUseLineIdx, nextBranchIdx > -1 ? nextBranchIdx : undefined)
+    expect(branchLines.some(l => l.includes('builtinToolUseCount++'))).toBe(true)
+  })
+
+  it('agent.custom_tool_use branch does not increment builtinToolUseCount', () => {
+    const lines = src.split('\n')
+    const customStartIdx = lines.findIndex(l => l.includes("event.type === 'agent.custom_tool_use'"))
+    expect(customStartIdx).toBeGreaterThan(-1)
+    const customEndIdx = lines.findIndex((l, i) => i > customStartIdx && l.trimStart().startsWith('} else'))
+    const branchLines = lines.slice(customStartIdx, customEndIdx > -1 ? customEndIdx : undefined)
+    for (const line of branchLines) {
+      expect(line).not.toContain('builtinToolUseCount++')
+    }
+  })
+
+  it('broker session result exposes builtinToolUseCount from accumulated state', () => {
+    expect(src).toContain('builtinToolUseCount: state.builtinToolUseCount')
+  })
+})
+
 describe('clearance invariants in session summary', () => {
   it('SESSION_SUMMARY clearedForRealProjectMounting is always false', () => {
     // The clearedForRealProjectMounting field in SESSION_SUMMARY.json must
