@@ -210,12 +210,21 @@ Actions taken:
 * Removed six runtime acceptance artifacts from tracked tree
   (`.powerplant/acceptance/gate4-1780075485/**`)
 * Redacted live session identifier in `docs/BUILD_LOG.md`
+* Redacted two live agent IDs and one live environment ID in `docs/BUILD_LOG.md`
+  (Sprint 3U and Sprint 3V sections; class: live runtime IDs)
 * Redacted live session, agent, and environment IDs in `data/sprint1b-allow-report.json`
   and `data/sprint1b-deny-report.json`; sanitized evidence structure preserved
 * Removed operator-local `.claude/settings.json` from tracked tree (personal permission
   overrides for a different project; Case B local override)
 * Replaced hardcoded operator-local path in `src/config/constants.ts`
   (`SPRINT4A_PILOT_SOURCE_PATH`) with env-variable-driven resolution
+* Added `resolveSprint4aPilotSourcePath()` function that throws explicitly before any
+  filesystem operation when `SPRINT4A_PILOT_SOURCE_PATH` is unset or empty, eliminating
+  the empty-string-to-CWD ambiguity in `path.resolve('')`
+* Updated production callsites (`run-sanitized-project-pilot.ts`,
+  `proof-pilot-snapshot.ts`, `create-external-pilot.ts`) to use
+  `resolveSprint4aPilotSourcePath()` instead of the deprecated constant directly
+* Added `.env.example` entry documenting `SPRINT4A_PILOT_SOURCE_PATH`
 * Updated five test files to import `SPRINT4A_PILOT_SOURCE_PATH` from constants
   instead of hardcoding the operator path
 * Replaced adversarial sentinel path in `tests/synthetic-promoted-guidance-pilot.test.ts`
@@ -228,6 +237,9 @@ Actions taken:
   - `.claude/settings.json` — personal local Claude permission overrides
 * Updated `vitest.config.ts` to load `.env` via `vite.loadEnv` so the operator-local
   pilot path is supplied at test time from the gitignored `.env` file
+* Added three targeted tests to `tests/config.test.ts` proving
+  `resolveSprint4aPilotSourcePath()` throws before any filesystem operation when
+  the env var is absent or empty, and returns the configured path when set
 
 Recurrence prevention: the added `.gitignore` rules block future accidental tracking of
 the same artifact classes.
