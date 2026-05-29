@@ -1,35 +1,20 @@
-// Stage 2B P0-C — capsule-v1 Hostile Fixture Tests (F1–F12)
+// Stage 2B P0-C — capsule-v1 Hostile Fixture Tests (F1–F12) [base suite; extended by P0-E]
 //
-// Proves, under Docker capsule isolation, ALL controls that subprocess-node-v1 could not:
-//
-//   F1  — Benign correct implementation          → oracle PASS
-//   F2  — Wrong implementation                   → oracle FAIL
-//   F3  — Host file read at import time          → subprocess isolated; oracle PASS
-//   F4  — Workspace write attempt                → read-only workspace blocks write; oracle PASS
-//   F5  — Async outbound HTTP at module load     → network=none blocks; networkIsolationProven:true
-//   F6  — Infinite loop                          → killed by timeout; TIMEOUT
-//   F7  — Output flood                           → output bytes capped; OUTPUT_CAPPED or TIMEOUT
-//   F8  — Read host /tmp sentinel (not mounted)  → ENOENT; fullFilesystemIsolationProven:true
-//   F9  — Write host /tmp sentinel (not mounted) → ENOENT or EROFS; sentinel unchanged
-//   F10 — Read arbitrary host path outside mounts → ENOENT
-//   F11 — Read sensitive inherited env variable  → absent in container
-//   F12 — Attempt oracle mutation                → EROFS; hash unchanged after run
+// Documents the original F1–F12 capsule proof. The definitive extended suite (F1–F16)
+// is in p0-e-capsule-trust-root.test.ts which additionally covers:
+//   - F5b direct-IP network denial, F5c Docker socket absence
+//   - F13/F14/F15 result-forgery resistance, F16 image-identity mismatch
+//   - Corrected receipt semantics (candidateCodeExecutedInCapsule etc.)
+//   - Hardened args (--cap-drop=ALL, --pids-limit=64)
 //
 // Oracle visibility contract:
-//   oracle_visibility         = PUBLIC_BY_DESIGN
-//   oracle_integrity          = HASH_LOCKED
-//   oracle_confidentiality    = NOT_REQUIRED
-//   anti_gaming_claim         = NOT_MADE
-// (Test vectors ARE the spec; correct implementation cannot be distinguished from gaming.)
+//   oracle_visibility = PUBLIC_BY_DESIGN  oracle_integrity = HASH_LOCKED
+//   oracle_confidentiality = NOT_REQUIRED  anti_gaming_claim = NOT_MADE
 //
-// Terminal result: STAGE_2B_P0_C_CAPSULE_PROVEN (all controls verified)
+// Terminal result: STAGE_2B_P0_C_CAPSULE_PROVEN (F1–F12 controls verified)
 //
-// Boundaries preserved by this test file:
-//   - No registry seed
-//   - No promoteSkill
-//   - No Stage 2B live session start
-//   - No writes to real ~/.powerplant/state/
-//   - All fixtures run inside isolated Docker containers, never in this process
+// Boundaries: no registry seed; no promoteSkill; no Stage 2B live session;
+// no real ~/.powerplant/state/ writes; fixtures run only inside Docker containers.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import fs from 'fs'
@@ -222,8 +207,8 @@ describe('P0-C capsule-v1 F1: benign correct implementation', () => {
   it('oracle returns PASS; all capsule controls verified', async () => {
     const receipt = await runFixture({ fixtureContent: F1_BENIGN_CORRECT, fixtureLabel: 'F1-benign' })
     expect(receipt.terminalOracleStatus).toBe('PASS')
-    expect(receipt.hostExecutionOccurred).toBe(false)
-    expect(receipt.agentModifiedCodeExecuted).toBe(false)
+    expect(receipt.candidateCodeExecutedOnHost).toBe(false)
+    expect(receipt.candidateCodeExecutedInCapsule).toBe(true)
     expect(receipt.networkIsolationProven).toBe(true)
     expect(receipt.fullFilesystemIsolationProven).toBe(true)
     expect(receipt.tamperCheckPassed).toBe(true)
@@ -240,16 +225,16 @@ describe('P0-C capsule-v1 F2: wrong implementation', () => {
   it('oracle returns FAIL for always-healthy stub', async () => {
     const receipt = await runFixture({ fixtureContent: F2_WRONG_IMPL, fixtureLabel: 'F2-wrong' })
     expect(receipt.terminalOracleStatus).toBe('FAIL')
-    expect(receipt.hostExecutionOccurred).toBe(false)
+    expect(receipt.candidateCodeExecutedOnHost).toBe(false)
   }, 30000)
 })
 
 // ── F3: Host file read at import time ─────────────────────────────────────────
 
 describe('P0-C capsule-v1 F3: host file read at import time', () => {
-  it('oracle completes; hostExecutionOccurred:false; capsule isolation maintained', async () => {
+  it('oracle completes; candidateCodeExecutedOnHost:false; capsule isolation maintained', async () => {
     const receipt = await runFixture({ fixtureContent: F3_HOST_FILE_READ, fixtureLabel: 'F3-host-file-read' })
-    expect(receipt.hostExecutionOccurred).toBe(false)
+    expect(receipt.candidateCodeExecutedOnHost).toBe(false)
     expect(receipt.terminalOracleStatus).toBe('PASS')
     expect(receipt.networkIsolationProven).toBe(true)
   }, 30000)
@@ -260,7 +245,7 @@ describe('P0-C capsule-v1 F3: host file read at import time', () => {
 describe('P0-C capsule-v1 F4: workspace write attempt blocked', () => {
   it('oracle completes; workspaceReadOnly enforced by read-only mount + chmod', async () => {
     const receipt = await runFixture({ fixtureContent: F4_WORKSPACE_WRITE, fixtureLabel: 'F4-workspace-write' })
-    expect(receipt.hostExecutionOccurred).toBe(false)
+    expect(receipt.candidateCodeExecutedOnHost).toBe(false)
     expect(receipt.terminalOracleStatus).toBe('PASS')
     expect(receipt.verifiedControls).toContain('workspace_readonly')
   }, 30000)
@@ -274,7 +259,7 @@ describe('P0-C capsule-v1 F5: async outbound HTTP — network=none blocks all eg
     expect(receipt.networkIsolationProven).toBe(true)
     expect(receipt.verifiedControls).toContain('network_isolation')
     expect(receipt.unverifiedControls).toHaveLength(0)
-    expect(receipt.hostExecutionOccurred).toBe(false)
+    expect(receipt.candidateCodeExecutedOnHost).toBe(false)
     expect(receipt.capsuleConfig.networkMode).toBe('none')
   }, 30000)
 })
@@ -290,7 +275,7 @@ describe('P0-C capsule-v1 F6: infinite loop — timeout enforcement', () => {
     })
     expect(receipt.terminalOracleStatus).toBe('TIMEOUT')
     expect(receipt.timeoutEnforced).toBe(true)
-    expect(receipt.hostExecutionOccurred).toBe(false)
+    expect(receipt.candidateCodeExecutedOnHost).toBe(false)
     expect(receipt.cleanupComplete).toBe(true)
     expect(receipt.verifiedControls).toContain('timeout_enforcement')
   }, 30000)
@@ -308,7 +293,7 @@ describe('P0-C capsule-v1 F7: output flood — output cap enforcement', () => {
     })
     expect(['OUTPUT_CAPPED', 'TIMEOUT']).toContain(receipt.terminalOracleStatus)
     expect(receipt.outputCapped || receipt.timeoutEnforced).toBe(true)
-    expect(receipt.hostExecutionOccurred).toBe(false)
+    expect(receipt.candidateCodeExecutedOnHost).toBe(false)
     expect(receipt.cleanupComplete).toBe(true)
     expect(receipt.verifiedControls).toContain('output_cap')
   }, 30000)
@@ -469,8 +454,8 @@ describe('P0-C capsule-v1 receipt structure invariants', () => {
     expect(receipt.oracleSha256).toMatch(/^[0-9a-f]{64}$/)
     expect(receipt.workspacePayloadHash).toMatch(/^[0-9a-f]{64}$/)
     expect(receipt.controlPolicyVersion).toBe('stage2b-preflight-v1')
-    expect(receipt.hostExecutionOccurred).toBe(false)
-    expect(receipt.agentModifiedCodeExecuted).toBe(false)
+    expect(receipt.candidateCodeExecutedOnHost).toBe(false)
+    expect(receipt.candidateCodeExecutedInCapsule).toBe(true)
     expect(receipt.networkIsolationProven).toBe(true)
     expect(receipt.fullFilesystemIsolationProven).toBe(true)
     expect(receipt.unverifiedControls).toHaveLength(0)

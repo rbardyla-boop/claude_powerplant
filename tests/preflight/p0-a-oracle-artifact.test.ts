@@ -11,6 +11,23 @@
 //   8. Bundle receipt records agentModifiedCodeExecuted: false
 //
 // Terminal result: P0_A_ORACLE_ARTIFACT_PROVEN
+//
+// ── P0-D Amendment (sealed at P0-E, commit c9aa2d3) ─────────────────────────
+// Commit 92a2f50 did NOT pass clean replay. Its P0-A test contained a location-
+// dependent assertion that failed when the repository was checked out under /tmp.
+// That broad /tmp exclusion has been removed. Commit c9aa2d3 supersedes 92a2f50
+// for P0-A clean-replay evidence.
+//
+// Revised oracle location contract (effective c9aa2d3 / P0-E):
+//   oracle_visibility        = PUBLIC_BY_DESIGN
+//   oracle_integrity         = HASH_LOCKED
+//   oracle_confidentiality   = NOT_REQUIRED
+//   oracle_location_contract = "oracle may reside under any clean checkout path,
+//                               including /tmp; security relies on read-only capsule
+//                               mounts and trusted receipt construction, not on the
+//                               host checkout-path prefix"
+// The only path excluded is SPRINT4A_RUNTIME_BASE (/tmp/powerplant-sprint4a),
+// which is the live agent workspace sandbox — NOT a blanket /tmp exclusion.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import fs from 'fs'

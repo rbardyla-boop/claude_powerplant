@@ -12,34 +12,57 @@
 //
 // <workspacePath>  Absolute path to the workspace directory under evaluation.
 //                  Must contain src/status.js and package.json.
-// <outputPath>     Absolute path where the oracle writes its JSON result.
-//                  This file is outside the workspace so floods / chmod cannot block it.
+// <outputPath>     Absolute path where the oracle writes its advisory JSON result.
 //
-// Result JSON written to <outputPath>:
+// Trusted result channel (P0-E):
+//   Oracle writes ORACLE_TRUSTED_RESULT:<json> to stdout using function references
+//   saved BEFORE candidate code is imported. This prevents monkey-patching of
+//   process.exit or process.stdout.write from affecting result integrity.
+//   The parent evaluator uses stdout as the primary PASS/FAIL source; the output
+//   file at <outputPath> is advisory only.
+//
+// Result JSON written to stdout (primary) and <outputPath> (advisory):
 //   { status: 'PASS' | 'FAIL' | 'ERROR', testVectors: number, failures: Failure[] }
 
 import path from 'path'
 import { writeFileSync, existsSync } from 'fs'
 import { pathToFileURL } from 'url'
 
+// ── Save original process functions BEFORE any candidate code runs ────────────
+// These references cannot be intercepted by candidate monkey-patching of
+// process.exit, process.stdout.write, or Object.defineProperty tricks.
+// They are used exclusively for trusted result emission.
+const __originalExit = process.exit.bind(process)
+const __originalStdoutWrite = process.stdout.write.bind(process.stdout)
+
 const [, , workspacePath, outputPath] = process.argv
 
 function writeResult(result) {
+  // Primary trusted channel: stdout sentinel using saved reference.
+  // Oracle always writes this LAST, after all candidate code completes.
+  // The parent evaluator reads stdout for the authoritative PASS/FAIL verdict.
+  __originalStdoutWrite(`ORACLE_TRUSTED_RESULT:${JSON.stringify(result)}\n`)
+  // Advisory secondary channel: output file (not used by parent for trust).
   if (outputPath) {
-    writeFileSync(outputPath, JSON.stringify(result, null, 2))
+    try { writeFileSync(outputPath, JSON.stringify(result, null, 2)) } catch { /* advisory */ }
   }
+}
+
+function exitProcess(code) {
+  // Use saved reference to bypass any candidate override of process.exit.
+  __originalExit(code)
 }
 
 if (!workspacePath || !outputPath) {
   writeResult({ status: 'ERROR', error: 'Usage: node operator-task-oracle.mjs <workspacePath> <outputPath>', testVectors: 0, failures: [] })
-  process.exit(1)
+  exitProcess(1)
 }
 
 const statusPath = path.resolve(workspacePath, 'src', 'status.js')
 
 if (!existsSync(statusPath)) {
   writeResult({ status: 'FAIL', reason: `src/status.js not found at ${statusPath}`, testVectors: 0, failures: [] })
-  process.exit(0)
+  exitProcess(0)
 }
 
 let summarizeChecks
@@ -48,12 +71,12 @@ try {
   summarizeChecks = mod.summarizeChecks
 } catch (err) {
   writeResult({ status: 'FAIL', reason: `Failed to import src/status.js: ${String(err)}`, testVectors: 0, failures: [] })
-  process.exit(0)
+  exitProcess(0)
 }
 
 if (typeof summarizeChecks !== 'function') {
   writeResult({ status: 'FAIL', reason: 'summarizeChecks is not exported as a function from src/status.js', testVectors: 0, failures: [] })
-  process.exit(0)
+  exitProcess(0)
 }
 
 const failures = []
@@ -100,4 +123,4 @@ if (!nonArrayThrew) {
 }
 
 writeResult({ status: failures.length === 0 ? 'PASS' : 'FAIL', testVectors: 4, failures })
-process.exit(0)
+exitProcess(0)

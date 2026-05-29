@@ -194,12 +194,16 @@ export const STAGE2B_PREFLIGHT_CONTROL_POLICY_VERSION = 'stage2b-preflight-v1' a
 export const STAGE2B_TOOL_POLICY_VERSION = 'stage2b-tool-policy-v1' as const
 
 // Stage 2B Preflight — capsule-v1 evaluator profile
-// Uses powerplant-evaluator:node-test-js-v1 which is already present locally;
-// no pull is needed and the image is known-good from prior stage execution.
+// Image identity is content-pinned: the evaluator verifies the actual image ID against
+// CAPSULE_V1_EXPECTED_IMAGE_ID before any candidate code runs. If the tag is reused with
+// a different image, execution is refused. See docker/capsule-v1/build-manifest.json.
 export const STAGE2B_CAPSULE_EVALUATOR_PROFILE_ID = 'capsule-v1' as const
 export const CAPSULE_DOCKER_IMAGE = 'powerplant-evaluator:node-test-js-v1' as const
+export const CAPSULE_V1_EXPECTED_IMAGE_ID = 'sha256:f496aac93ff3459a5142f2e37aedb025c414f5a7244e299160ae82a3aa29ad48' as const
 export const CAPSULE_ORACLE_MOUNT_TARGET = '/oracle' as const
 export const CAPSULE_WORKSPACE_MOUNT_TARGET = '/workspace' as const
 export const CAPSULE_OUTPUT_MOUNT_TARGET = '/output' as const
 export const CAPSULE_MAX_OUTPUT_BYTES_DEFAULT = 65536 as const   // 64 KB
 export const CAPSULE_TIMEOUT_MS_DEFAULT = 10000 as const         // 10s (includes container start)
+export const CAPSULE_PIDS_LIMIT = 64 as const
+export const ORACLE_TRUSTED_RESULT_PREFIX = 'ORACLE_TRUSTED_RESULT:' as const
