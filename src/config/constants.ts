@@ -192,3 +192,14 @@ export const STAGE2B_ORACLE_TASK_SPEC_VERSION = 'summarizeChecks-v1' as const
 export const STAGE2B_PREFLIGHT_EVALUATOR_PROFILE_ID = 'subprocess-node-v1' as const
 export const STAGE2B_PREFLIGHT_CONTROL_POLICY_VERSION = 'stage2b-preflight-v1' as const
 export const STAGE2B_TOOL_POLICY_VERSION = 'stage2b-tool-policy-v1' as const
+
+// Stage 2B Preflight — capsule-v1 evaluator profile
+// Uses powerplant-evaluator:node-test-js-v1 which is already present locally;
+// no pull is needed and the image is known-good from prior stage execution.
+export const STAGE2B_CAPSULE_EVALUATOR_PROFILE_ID = 'capsule-v1' as const
+export const CAPSULE_DOCKER_IMAGE = 'powerplant-evaluator:node-test-js-v1' as const
+export const CAPSULE_ORACLE_MOUNT_TARGET = '/oracle' as const
+export const CAPSULE_WORKSPACE_MOUNT_TARGET = '/workspace' as const
+export const CAPSULE_OUTPUT_MOUNT_TARGET = '/output' as const
+export const CAPSULE_MAX_OUTPUT_BYTES_DEFAULT = 65536 as const   // 64 KB
+export const CAPSULE_TIMEOUT_MS_DEFAULT = 10000 as const         // 10s (includes container start)

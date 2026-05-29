@@ -54,15 +54,12 @@ describe('P0-A oracle artifact invariants', () => {
     expect(h1).toMatch(/^[0-9a-f]{64}$/)
   })
 
-  it('oracle source path is outside SPRINT4A_RUNTIME_BASE (agent workspace root)', () => {
+  it('oracle source path is outside SPRINT4A_RUNTIME_BASE (agent workspace sandbox)', () => {
     // Agent workspaces are copies under /tmp/powerplant-sprint4a/.
-    // The oracle is in the Powerplant repo; these are disjoint namespaces.
+    // The oracle must be outside that specific sandbox root — not merely outside /tmp/.
+    // A broad /tmp/ check would incorrectly fail when clean-worktree tests run from /tmp.
+    expect(ORACLE_SOURCE_PATH.startsWith(SPRINT4A_RUNTIME_BASE + '/')).toBe(false)
     expect(ORACLE_SOURCE_PATH.startsWith(SPRINT4A_RUNTIME_BASE)).toBe(false)
-  })
-
-  it('oracle source path is outside /tmp (no workspace sandbox overlap)', () => {
-    expect(ORACLE_SOURCE_PATH.startsWith('/tmp/')).toBe(false)
-    expect(ORACLE_SOURCE_PATH.startsWith(os.tmpdir() + '/')).toBe(false)
   })
 
   it('oracle source path does not match any relative allowedWritePaths pattern', () => {
