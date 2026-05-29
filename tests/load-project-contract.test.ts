@@ -4,6 +4,7 @@ import path from 'path'
 import os from 'os'
 import { loadProjectContract } from '../src/projects/load-project-contract.js'
 import { previewSanitization } from '../src/projects/preview-sanitization.js'
+import { SPRINT4A_PILOT_SOURCE_PATH } from '../src/config/constants.js'
 
 // ── Fixture helpers ───────────────────────────────────────────────────────────
 
@@ -156,7 +157,7 @@ checks:
 // ── Requirement 4: pilot still works through its own YAML contract ─────────────
 
 describe('pilot project backward compatibility', () => {
-  const PILOT_PATH = '/home/thebackhand/Downloads/grok/powerplant_pilot_status'
+  const PILOT_PATH = SPRINT4A_PILOT_SOURCE_PATH
 
   it('pilot project loads its contract if directory exists', () => {
     if (!fs.existsSync(PILOT_PATH)) return // skip on machines without the pilot

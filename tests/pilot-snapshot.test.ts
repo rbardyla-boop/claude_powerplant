@@ -5,9 +5,10 @@ import os from 'os'
 import { buildPilotSnapshot } from '../src/projects/build-pilot-snapshot.js'
 import { verifySourceUnchanged } from '../src/projects/verify-source-unchanged.js'
 import type { ProjectContract } from '../src/projects/project-contract.js'
+import { SPRINT4A_PILOT_SOURCE_PATH } from '../src/config/constants.js'
 
 // We build a real snapshot from the actual pilot project (no Docker, no API)
-const PILOT_SOURCE = '/home/thebackhand/Downloads/grok/powerplant_pilot_status'
+const PILOT_SOURCE = SPRINT4A_PILOT_SOURCE_PATH
 
 function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'pp-pilot-test-'))

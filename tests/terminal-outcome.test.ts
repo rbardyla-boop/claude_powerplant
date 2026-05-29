@@ -17,8 +17,9 @@ import { loadProjectContract } from '../src/projects/load-project-contract.js'
 import type { CheckResult } from '../src/contracts/verification-preflight-report.js'
 import type { RunClassification } from '../src/contracts/project-tool-contracts.js'
 import { printReviewReport } from '../src/cli/terminal-output.js'
+import { SPRINT4A_PILOT_SOURCE_PATH } from '../src/config/constants.js'
 
-const PILOT_SOURCE = '/home/thebackhand/Downloads/grok/powerplant_pilot_status'
+const PILOT_SOURCE = SPRINT4A_PILOT_SOURCE_PATH
 const FINAL_RESPONSE = 'SANITIZED PILOT PATCH COMPLETE'
 
 const passCheck: CheckResult = {

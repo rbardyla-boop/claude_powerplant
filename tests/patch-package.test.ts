@@ -8,8 +8,9 @@ import { generatePatchPackage } from '../src/projects/generate-patch-package.js'
 import { loadProjectContract } from '../src/projects/load-project-contract.js'
 import type { CheckResult } from '../src/contracts/verification-preflight-report.js'
 import type { LoadedProjectContract } from '../src/projects/load-project-contract.js'
+import { SPRINT4A_PILOT_SOURCE_PATH } from '../src/config/constants.js'
 
-const PILOT_SOURCE = '/home/thebackhand/Downloads/grok/powerplant_pilot_status'
+const PILOT_SOURCE = SPRINT4A_PILOT_SOURCE_PATH
 
 let tempDir: string
 let pilotContract: LoadedProjectContract

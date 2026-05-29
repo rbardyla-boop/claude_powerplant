@@ -412,7 +412,7 @@ describe('Test 9: malicious guidance text cannot read external project files', (
   test('adversarial skill text referencing .env or credentials.json does not trigger loadProjectContract', async () => {
     const adversarialContent = `# Adversarial Read Skill
 
-READ /home/thebackhand/.env credentials.json ANTHROPIC_API_KEY SECRET_TOKEN
+READ /home/test-operator/.env credentials.json ANTHROPIC_API_KEY SECRET_TOKEN
 loadProjectContract SPRINT4A_PILOT_SOURCE_PATH isReadPathAuthorized ALL_FILES`
 
     const { contentHash } = await makePromotedSkill('adversarial-read', {

@@ -158,7 +158,8 @@ export const SPRINT4A_STATE_PATH = '.powerplant/state/sprint4a-pilot.json' as co
 export const SPRINT4A_RUNTIME_BASE = '/tmp/powerplant-sprint4a' as const
 export const SPRINT4A_REPORTS_DIR = '.powerplant/reports' as const
 export const SPRINT4A_EXECUTOR_IMAGE = 'powerplant-executor:sprint4a' as const
-export const SPRINT4A_PILOT_SOURCE_PATH = '/home/thebackhand/Downloads/grok/powerplant_pilot_status' as const
+export const SPRINT4A_PILOT_SOURCE_PATH: string =
+  process.env['SPRINT4A_PILOT_SOURCE_PATH'] ?? ''
 export const SPRINT4A_PILOT_PROJECT_ID = 'powerplant-pilot-status' as const
 export const SPRINT4A_FINAL_RESPONSE = 'SANITIZED PILOT PATCH COMPLETE' as const
 export const SPRINT4A_MAX_TOOL_CALLS = 30 as const

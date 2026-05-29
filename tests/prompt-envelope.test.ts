@@ -10,9 +10,9 @@ import { printReviewReport } from '../src/cli/terminal-output.js'
 import type { CheckResult } from '../src/contracts/verification-preflight-report.js'
 import type { LoadedProjectContract } from '../src/projects/load-project-contract.js'
 import { loadProjectContract } from '../src/projects/load-project-contract.js'
-import { PROMPT_ENVELOPE_PROTOCOL_VERSION } from '../src/config/constants.js'
+import { PROMPT_ENVELOPE_PROTOCOL_VERSION, SPRINT4A_PILOT_SOURCE_PATH } from '../src/config/constants.js'
 
-const PILOT_SOURCE = '/home/thebackhand/Downloads/grok/powerplant_pilot_status'
+const PILOT_SOURCE = SPRINT4A_PILOT_SOURCE_PATH
 
 const USER_TASK = 'Add a function that returns failed check names.'
 const AGENT_MESSAGE =
