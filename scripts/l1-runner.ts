@@ -11,7 +11,7 @@
 //   - Duplicate/ambiguous active Fixture A entries rejected
 //   - Pre/post real-state manifest equality enforced after every terminal exit path,
 //     including pilot throw, oracle throw, and oracle-stage mutation
-//   - Phase A/B timestamps validated (Phase A invocationTimestamp < Phase B completionTimestamp)
+//   - Phase A/B timestamps validated (Phase A invocationTimestamp < Phase B sessionStartedAt)
 //     in addition to JSONL line ordering
 //   - Capsule image identity verified (capsuleImageIdentityVerified === true)
 //   - Output-cap proof asserted (outputCapped === false for clean PASS)
@@ -508,9 +508,10 @@ async function _runL1HarnessInternal(opts: L1HarnessInternalOpts): Promise<L1Har
 
   // ── 11. Timestamp-based ordering proof ─────────────────────────────────────────
   // JSONL line ordering alone is insufficient; timestamps must be validated.
-  // Phase A invocationTimestamp must precede Phase B completionTimestamp.
+  // Phase A invocationTimestamp must precede Phase B sessionStartedAt (broker session start).
+  // This proves Phase A was recorded before the broker/session began.
   const phaseATimestamp = phaseA!.raw['invocationTimestamp']
-  const phaseBTimestamp = phaseB!.raw['completionTimestamp']
+  const phaseBTimestamp = phaseB!.raw['sessionStartedAt']
 
   if (typeof phaseATimestamp !== 'string' || !phaseATimestamp) {
     return failed('Phase A invocationTimestamp missing or not a string — required for temporal proof', emptyEvidence(withPhases))
@@ -524,19 +525,19 @@ async function _runL1HarnessInternal(opts: L1HarnessInternalOpts): Promise<L1Har
   }
 
   if (typeof phaseBTimestamp !== 'string' || !phaseBTimestamp) {
-    return failed('Phase B completionTimestamp missing — required for temporal ordering proof', emptyEvidence(withPhases))
+    return failed('Phase B sessionStartedAt missing — required for temporal ordering proof', emptyEvidence(withPhases))
   }
   const tsB = Date.parse(phaseBTimestamp)
   if (isNaN(tsB)) {
     return failed(
-      `Phase B completionTimestamp "${phaseBTimestamp}" is not parseable as ISO 8601`,
+      `Phase B sessionStartedAt "${phaseBTimestamp}" is not parseable as ISO 8601`,
       emptyEvidence(withPhases),
     )
   }
 
   if (tsA >= tsB) {
     return failed(
-      `Phase A invocationTimestamp (${phaseATimestamp}) does not precede Phase B completionTimestamp (${phaseBTimestamp}) — temporal ordering proof failed`,
+      `Phase A invocationTimestamp (${phaseATimestamp}) does not precede Phase B sessionStartedAt (${phaseBTimestamp}) — temporal ordering proof failed`,
       emptyEvidence({ ...withPhases, phaseABeforePhaseB: false }),
     )
   }

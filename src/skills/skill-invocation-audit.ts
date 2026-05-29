@@ -130,6 +130,7 @@ export interface CapsuleIsolationRecord {
 export interface SkillInvocationPhaseBRecord {
   phase: typeof SKILL_INVOCATION_PHASE_B
   invocationId: string           // links back to Phase A record
+  sessionStartedAt: string       // ISO 8601 — captured immediately before broker session begins
   sessionId: string              // from broker result (Managed Agent session ID)
   projectWriteOccurred: boolean
   checksInvalidatedByWrite: boolean

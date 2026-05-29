@@ -53,7 +53,7 @@ const ENVELOPE_HASH = crypto.createHash('sha256').update('fake-envelope', 'utf-8
 // Workspace status content is '' in all tests (file never exists); compute its expected hash
 const EMPTY_PAYLOAD_HASH = crypto.createHash('sha256').update('', 'utf-8').digest('hex')
 
-// Timestamps — Phase B completionTimestamp must be after Phase A invocationTimestamp
+// Timestamps — Phase B sessionStartedAt must be after Phase A invocationTimestamp
 const PHASE_A_TIMESTAMP = '2026-01-01T10:00:00.000Z'
 const PHASE_B_TIMESTAMP = '2026-01-01T10:01:00.000Z'
 
@@ -131,7 +131,7 @@ function writeAuditPair(
   const phaseB = JSON.stringify({
     phase: SKILL_INVOCATION_PHASE_B,
     invocationId,
-    completionTimestamp: overrides.phaseBTimestamp ?? PHASE_B_TIMESTAMP,
+    sessionStartedAt: overrides.phaseBTimestamp ?? PHASE_B_TIMESTAMP,
     sessionId: 'sess-001',
     projectWriteOccurred: true,
     checksInvalidatedByWrite: false,
@@ -586,7 +586,7 @@ describe('Phase A/B audit record checks', () => {
     const phaseB = JSON.stringify({
       phase: SKILL_INVOCATION_PHASE_B,
       invocationId,
-      completionTimestamp: PHASE_B_TIMESTAMP,
+      sessionStartedAt: PHASE_B_TIMESTAMP,
       sessionId: 'sess-001',
       patchEligibleForApplication: false,
     })
@@ -651,7 +651,7 @@ describe('Phase A/B audit record checks', () => {
     const phaseB = JSON.stringify({
       phase: SKILL_INVOCATION_PHASE_B,
       invocationId,
-      completionTimestamp: PHASE_B_TIMESTAMP,
+      sessionStartedAt: PHASE_B_TIMESTAMP,
       sessionId: 'sess-001',
       patchEligibleForApplication: false,
     })
@@ -684,7 +684,7 @@ describe('Phase A/B audit record checks', () => {
     })
     const pB = JSON.stringify({
       phase: SKILL_INVOCATION_PHASE_B, invocationId,
-      completionTimestamp: PHASE_B_TIMESTAMP,
+      sessionStartedAt: PHASE_B_TIMESTAMP,
       sessionId: 'sess-001', patchEligibleForApplication: false,
     })
     fs.writeFileSync(auditPath, pA + '\n' + pB + '\n')
@@ -709,7 +709,7 @@ describe('Phase A/B audit record checks', () => {
     })
     const pB = JSON.stringify({
       phase: SKILL_INVOCATION_PHASE_B, invocationId,
-      completionTimestamp: PHASE_B_TIMESTAMP,
+      sessionStartedAt: PHASE_B_TIMESTAMP,
       sessionId: 'sess-001', patchEligibleForApplication: false,
     })
     fs.writeFileSync(auditPath, pA + '\n' + pB + '\n')
@@ -722,7 +722,7 @@ describe('Phase A/B audit record checks', () => {
     expect(result.blockerReason).toContain('not parseable as ISO 8601')
   })
 
-  it('fails when Phase B completionTimestamp is missing', async () => {
+  it('fails when Phase B sessionStartedAt is missing', async () => {
     const auditPath = path.join(tmpAuditDir, 'audit.jsonl')
     const invocationId = 'inv-no-ts-b'
     const pA = JSON.stringify({
@@ -734,7 +734,7 @@ describe('Phase A/B audit record checks', () => {
     })
     const pB = JSON.stringify({
       phase: SKILL_INVOCATION_PHASE_B, invocationId,
-      // completionTimestamp intentionally omitted
+      // sessionStartedAt intentionally omitted — verifies harness rejects missing broker-start timestamp
       sessionId: 'sess-001', patchEligibleForApplication: false,
     })
     fs.writeFileSync(auditPath, pA + '\n' + pB + '\n')
@@ -744,10 +744,10 @@ describe('Phase A/B audit record checks', () => {
     }))
     const result = await _runL1HarnessForTesting(baseOpts(auditPath, { pilotExecutor }))
     expect(result.verdict).toBe('L1_HARNESS_FAILED')
-    expect(result.blockerReason).toContain('completionTimestamp missing')
+    expect(result.blockerReason).toContain('sessionStartedAt missing')
   })
 
-  it('fails when Phase B completionTimestamp is inverted (before Phase A) even with correct line order', async () => {
+  it('fails when Phase B sessionStartedAt is inverted (before Phase A) even with correct line order', async () => {
     const auditPath = path.join(tmpAuditDir, 'audit.jsonl')
     const invocationId = 'inv-inverted-ts'
     // Correct line order (A before B) but timestamps are inverted (B earlier than A)

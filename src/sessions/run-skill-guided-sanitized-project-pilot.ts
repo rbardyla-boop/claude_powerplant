@@ -400,6 +400,7 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
   let brokerResult: ProjectBrokerSessionResult | null = null
   let brokerException: Error | null = null
   let budgetExhausted = false
+  const sessionStartedAt = new Date().toISOString()
 
   try {
     brokerResult = await runProjectPilotBrokerSession({
@@ -481,6 +482,7 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
   const phaseBRecord: SkillInvocationPhaseBRecord = {
     phase: SKILL_INVOCATION_PHASE_B,
     invocationId,
+    sessionStartedAt,
     sessionId,
     projectWriteOccurred: writeOccurred,
     checksInvalidatedByWrite: checksInvalidated,
