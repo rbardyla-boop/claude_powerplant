@@ -338,7 +338,7 @@ describe('POWERPLANT_HOME canonical containment guard', () => {
   })
 
   it('blocks on sibling-prefix path outside the acceptance root', async () => {
-    const siblingPath = '/tmp/powerplant-stage2b-acceptance-evil/run1'
+    const siblingPath = path.join(os.tmpdir(), 'powerplant-stage2b-acceptance-evil', 'run1')
     const pilotExecutor = vi.fn()
     const result = await _runL1HarnessForTesting(
       baseOpts('', { powerplantHome: siblingPath, pilotExecutor }),

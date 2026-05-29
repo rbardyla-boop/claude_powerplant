@@ -53,7 +53,11 @@ import type {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-export const ACCEPTANCE_HOME_PREFIX = '/tmp/powerplant-stage2b-acceptance/'
+// ACCEPTANCE_HOME_PREFIX uses os.tmpdir() so the acceptance root is portable
+// across environments where the OS temp root differs from /tmp (e.g. /tmp/claude-1000).
+// Containment is preserved: the harness still requires POWERPLANT_HOME to be a
+// strict descendant of this directory, symlink and traversal escapes still blocked.
+export const ACCEPTANCE_HOME_PREFIX = path.join(os.tmpdir(), 'powerplant-stage2b-acceptance') + path.sep
 const ACCEPTANCE_BASE_DIR = ACCEPTANCE_HOME_PREFIX.slice(0, -1)
 const REQUIRED_COMPOSITION_POLICY = 'task-first-guidance-supplementary-v1'
 const WORKSPACE_STATUS_REL = path.join('src', 'status.js')
