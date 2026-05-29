@@ -179,7 +179,7 @@ if (_isMain) {
       })
       return {
         report,
-        builtinToolUseCount: report.builtinToolUseCount ?? 0,
+        builtinToolUseCount: report.builtinToolUseCount ?? -1,
       }
     },
   })

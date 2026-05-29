@@ -576,7 +576,8 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
       checksInvalidatedByWrite: false,
       checkResults: [],
       patch: null,
-      builtinToolUseCount: brokerResult?.builtinToolUseCount ?? 0,
+      // -1 signals "unobserved on exception path" — harness rejects any non-zero value
+      builtinToolUseCount: brokerResult?.builtinToolUseCount ?? -1,
     }
   }
 
@@ -606,6 +607,6 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
     patch: brokerResult?.patchPackage
       ? { patchDir: brokerResult.patchPackage.patchDir, patchFiles: brokerResult.patchPackage.patchFiles }
       : null,
-    builtinToolUseCount: brokerResult?.builtinToolUseCount ?? 0,
+    builtinToolUseCount: brokerResult?.builtinToolUseCount ?? -1,
   }
 }

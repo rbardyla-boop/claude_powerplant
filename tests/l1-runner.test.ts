@@ -575,6 +575,24 @@ describe('builtinToolUseCount enforcement', () => {
     expect(result.evidence.builtinToolCountZero).toBe(false)
     expect(result.evidence.builtinToolUseCount).toBe(3)
   })
+
+  it('fails when builtinToolUseCount is -1 (unobserved on broker-exception path)', async () => {
+    // -1 is the sentinel emitted by run-skill-guided-sanitized-project-pilot when
+    // brokerResult is null (broker threw). The harness must fail closed, not treat
+    // an unobserved count as proven-zero.
+    const auditPath = path.join(tmpAuditDir, 'audit.jsonl')
+    const invocationId = 'inv-builtin-neg'
+    writeAuditPair(auditPath, invocationId)
+    const pilotExecutor = vi.fn(async () => ({
+      report: makeMinimalReport(invocationId, { auditPath }),
+      builtinToolUseCount: -1,
+    }))
+    const result = await _runL1HarnessForTesting(baseOpts(auditPath, { pilotExecutor }))
+    expect(result.verdict).toBe('L1_HARNESS_FAILED')
+    expect(result.blockerReason).toContain('builtinToolUseCount=-1')
+    expect(result.evidence.builtinToolCountZero).toBe(false)
+    expect(result.evidence.builtinToolUseCount).toBe(-1)
+  })
 })
 
 // ── Phase A/B audit record checks ────────────────────────────────────────────
