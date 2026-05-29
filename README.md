@@ -74,7 +74,9 @@ Displays the full evidence bundle for a run: task, changed files, verification r
 
 ---
 
-## Safety Boundary
+## Stage 2B L1 Accepted Safety Boundary
+
+These properties describe the bounded Stage 2B L1 accepted execution path; they are not claims about every historical prototype or future stage.
 
 | Property | Status |
 |---|---|

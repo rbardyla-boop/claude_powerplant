@@ -957,3 +957,29 @@ run `powerplant inspect` against it, confirm no pilot paths appear in the disclo
 **Historical exposure:** Earlier non-credential runtime metadata (live session IDs, agent IDs, environment IDs, operator-local paths) remains in already-public Git history. No history rewrite has been performed. Any such decision requires separate explicit authorization.
 
 **Next authorized action:** Gate 6B2B — CI configuration, SECURITY.md, GitHub branch protection, secret scanning, license verification, and optional history-rewrite decision.
+
+---
+
+## Gate 6B2A Correction — Public Documentation Split-Brain Elimination
+
+**Date:** 2026-05-29
+**Branch:** `feat/stage2b-preflight`
+
+**Objective:** Eliminate public-documentation split-brain before release hardening. Two competing journals existed (root `BUILDLOG.md` and `docs/BUILD_LOG.md`); the release ledger referenced the stale root copy; ledger "Current Checkpoint" still claimed no live run had occurred; Public Claim Boundary and Completion Condition sections used overclaim language (`immutable fixture binding`, `sanitized immutable evidence`); README Safety Boundary section was not scoped to the accepted Stage 2B L1 path.
+
+**Surfaces changed:**
+
+- Root `BUILDLOG.md` deleted: single-session repair note whose "next steps" had already been completed; stale duplicate of `docs/BUILD_LOG.md`.
+- `docs/architecture/Stage 2B Completion and GitHub Release Ledger.md`:
+  - `## BUILDLOG.md Authorization` section renamed `## Engineering Journal Authorization`; reference updated from root `BUILDLOG.md` to `docs/BUILD_LOG.md`; retirement of root `BUILDLOG.md` recorded.
+  - Gate 4 end-of-section reference updated from `BUILDLOG.md` to `docs/BUILD_LOG.md`.
+  - Current Checkpoint section: removed stale "Live Anthropic/API call: not yet authorized", "Live L1 session: not yet executed", and `36b9efc` accepted-HEAD line; replaced with current milestone statement.
+  - Public Claim Boundary "After" clause: replaced `immutable fixture binding` with accepted trusted-directory language.
+  - Completion Condition: replaced `sanitized immutable evidence` with `sanitized evidence under the documented trusted-directory assumption`.
+- `README.md`: `## Safety Boundary` renamed `## Stage 2B L1 Accepted Safety Boundary`; qualifying sentence added before the property table scoping the claims to the bounded Stage 2B L1 accepted execution path.
+
+**Validation result:** `npm test` and `npx tsc --noEmit` pass (no source changes). Sanitation scans: no `immutable fixture binding`, no `sanitized immutable evidence`, no stale no-live-execution language in ledger. Root `BUILDLOG.md` absent. `docs/BUILD_LOG.md` is the sole journal referenced in the ledger and README.
+
+**Accepted claim:** One canonical engineering journal now exists (`docs/BUILD_LOG.md`). Public claim language in the ledger and README matches the accepted trusted-directory boundary. No overclaims remain in public-facing documentation.
+
+**Next authorized action:** Gate 6B2B — CI workflow, restricted `.env` loading review, `SECURITY.md`, license verification, GitHub branch protection, secret scanning and push protection, and optional separate history-rewrite decision.

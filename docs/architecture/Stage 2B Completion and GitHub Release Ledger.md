@@ -9,20 +9,18 @@ This ledger is the canonical finish line. No task may expand beyond it without e
 ## Current Checkpoint
 
 * Branch: `feat/stage2b-preflight`
-* Accepted checkpoint HEAD: `36b9efc` (bounded/yielding timestamp capture repair)
 * P0-A / P0-B / P0-C: previously proven and not to be reopened without evidence of regression
 * L1 temporal evidence field: `sessionStartedAt`
 * Contract meaning of `sessionStartedAt`: timestamp captured immediately before the broker invocation begins, as defined by the Stage 2B L1 acceptance-plan boundary
-* Live Anthropic/API call: not yet authorized
-* Live L1 session: not yet executed
 * L2–L7: out of scope
 
-## BUILDLOG.md Authorization
+Stage 2B L1 completed one bounded live acceptance run under the documented trusted-directory assumption. Gate 6B current-tree sanitation and public documentation alignment are complete or in progress as recorded below; CI/security/license hardening remains pending.
 
-`BUILDLOG.md`, introduced at commit `c841065`, is an authorized Stage 2B development journal
-written by the project operator. It records the repair trail and implementation reasoning for
-Gate 1 work. It is **non-normative**: if it conflicts with this ledger, the acceptance plan,
-committed validation tests, or any final acceptance receipt, those authoritative artifacts control.
+## Engineering Journal Authorization
+
+`docs/BUILD_LOG.md` is the sole maintained engineering journal for Stage 2B. It records the repair trail, investigation reasoning, and milestone work entries chronologically. It is **non-normative**: if it conflicts with this ledger, the acceptance plan, committed validation tests, or any final acceptance receipt, those authoritative artifacts control.
+
+Root `BUILDLOG.md`, which was introduced at commit `c841065` as a single-session repair note, was retired as a stale duplicate after `docs/BUILD_LOG.md` was established as the canonical non-normative engineering journal. Root `BUILDLOG.md` no longer exists.
 
 ## Frozen Exclusions
 
@@ -154,9 +152,7 @@ The sanitized acceptance report is committed at:
 
 GitHub publication remains blocked pending Gate 6 security, CI, and public-claim review.
 
-BUILDLOG.md remains authorized and non-normative: if it conflicts with this ledger, the
-acceptance plan, committed validation tests, or the final acceptance receipt, those
-authoritative artifacts control.
+`docs/BUILD_LOG.md` remains the authorized non-normative engineering journal: if it conflicts with this ledger, the acceptance plan, committed validation tests, or the final acceptance receipt, those authoritative artifacts control.
 
 ### Gate 5 — Stage 2B Closeout Documentation — **CLOSED** (Gate 6B2A)
 
@@ -296,7 +292,7 @@ Before a successful live L1 run:
 
 After a successful live L1 run:
 
-> Stage 2B L1 accepted through one bounded live execution with immutable fixture binding, isolated oracle evaluation, sanitized workspace containment and recorded evidence receipts.
+> Stage 2B L1 accepted through one bounded live execution. Trusted-directory L0 receipt consistency verified during an operator-controlled bootstrap-to-L1 handoff; cryptographic resistance to pre-run receipt-and-registry co-substitution is not claimed. Isolated oracle evaluation, sanitized workspace containment, and recorded evidence receipts.
 
 Do not state or imply that L2–L7, downstream integrations or production deployment have been proven.
 
@@ -306,5 +302,5 @@ Stage 2B is ready for public GitHub release only when:
 
 * Gate 1 through Gate 6 are closed.
 * Full tests and typecheck pass in clean CI.
-* The live L1 outcome, if claimed, is supported by sanitized immutable evidence.
+* The live L1 outcome, if claimed, is supported by sanitized evidence under the documented trusted-directory assumption.
 * The public repository contains no secrets or misleading claims.
