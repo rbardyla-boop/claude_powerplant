@@ -20,16 +20,24 @@
 //   - Denied writes emit a receipt (not null)
 //   - Denied tool event has allowed: false and a denialReason
 //   - Denied write creates no outside file
-//   - path.relative()-based check rejects traversal and same-prefix siblings
+//   - Canonical boundary check rejects traversal and same-prefix siblings
 //   - builtinToolUseCount is zero in both allowed and denied paths
 //   - repoManifestImmutable is honestly preserved in both paths
+//
+// Step 4 proves symlink-safe write-boundary enforcement:
+//   - Symlink directory inside workspace pointing outside is denied (by test)
+//   - Symlink file target inside workspace pointing outside is denied (by test)
+//   - Nested symlink escape is denied (by test)
+//   - Ordinary nested directory write inside workspace still succeeds
+//   - Existing normal file inside workspace can be overwritten
+//   - Same-prefix sibling and '..' traversal remain denied
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
-const { _runStage2cSkeletonForTesting } =
+const { _runStage2cSkeletonForTesting, _checkWriteTargetBoundaryForTesting } =
   await import('../scripts/stage2c-runner.js')
 
 import type {
@@ -619,6 +627,136 @@ describe('fake-agent task validation', () => {
     expect(result.outcome).toBe('RUNNER_BLOCKED')
     expect(result.blockerReason).toContain('non-empty')
     expect(result.receipt).toBeNull()
+  })
+})
+
+// ── Step 4: write-target boundary — symlink escape enforcement ────────────────
+//
+// These tests use _checkWriteTargetBoundaryForTesting to create real filesystem
+// fixtures (symlinks) and verify that the canonical boundary check denies
+// each escape vector. Symlink escapes are denied by test, not by claim.
+
+describe('write-target boundary — symlink escape enforcement (Step 4)', () => {
+  let wsDir: string
+  let outsideDir: string
+  let outsideFile: string
+
+  beforeEach(() => {
+    wsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stage2c-ws4-'))
+    outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stage2c-out4-'))
+    outsideFile = path.join(outsideDir, 'outside.txt')
+    fs.writeFileSync(outsideFile, 'outside content\n')
+  })
+
+  afterEach(() => {
+    fs.rmSync(wsDir, { recursive: true, force: true })
+    fs.rmSync(outsideDir, { recursive: true, force: true })
+  })
+
+  // ── Allowed cases ────────────────────────────────────────────────────────────
+
+  it('allows write to non-existing file directly inside workspace', () => {
+    const target = path.join(wsDir, 'output.txt')
+    const result = _checkWriteTargetBoundaryForTesting(target, wsDir)
+    expect(result.allowed).toBe(true)
+  })
+
+  it('allows write to non-existing file in a non-existing nested subdirectory', () => {
+    const target = path.join(wsDir, 'nested', 'deep', 'output.txt')
+    const result = _checkWriteTargetBoundaryForTesting(target, wsDir)
+    expect(result.allowed).toBe(true)
+  })
+
+  it('allows overwrite of an existing regular file inside workspace', () => {
+    const target = path.join(wsDir, 'existing.txt')
+    fs.writeFileSync(target, 'initial content')
+    const result = _checkWriteTargetBoundaryForTesting(target, wsDir)
+    expect(result.allowed).toBe(true)
+  })
+
+  it('allows write into an existing subdirectory inside workspace', () => {
+    const subdir = path.join(wsDir, 'subdir')
+    fs.mkdirSync(subdir)
+    const target = path.join(subdir, 'output.txt')
+    const result = _checkWriteTargetBoundaryForTesting(target, wsDir)
+    expect(result.allowed).toBe(true)
+  })
+
+  // ── Symlink escape cases — denied by test ────────────────────────────────────
+
+  it('denies symlink directory inside workspace pointing outside', () => {
+    // wsDir/evil_link -> outsideDir
+    const symlinkDir = path.join(wsDir, 'evil_link')
+    fs.symlinkSync(outsideDir, symlinkDir)
+
+    const target = path.join(symlinkDir, 'output.txt')
+    const result = _checkWriteTargetBoundaryForTesting(target, wsDir)
+    expect(result.allowed).toBe(false)
+    expect(result.denialReason).toBe('TARGET_SYMLINK_ESCAPE')
+  })
+
+  it('denies symlink file target inside workspace pointing outside', () => {
+    // wsDir/evil_link.txt -> outsideFile
+    const symlinkFile = path.join(wsDir, 'evil_link.txt')
+    fs.symlinkSync(outsideFile, symlinkFile)
+
+    const result = _checkWriteTargetBoundaryForTesting(symlinkFile, wsDir)
+    expect(result.allowed).toBe(false)
+    expect(result.denialReason).toBe('TARGET_SYMLINK_ESCAPE')
+  })
+
+  it('denies nested symlink escape inside a real subdirectory', () => {
+    // wsDir/subdir/ (real) + wsDir/subdir/evil_link -> outsideDir
+    const subdir = path.join(wsDir, 'subdir')
+    fs.mkdirSync(subdir)
+    const symlinkDir = path.join(subdir, 'evil_link')
+    fs.symlinkSync(outsideDir, symlinkDir)
+
+    const target = path.join(symlinkDir, 'output.txt')
+    const result = _checkWriteTargetBoundaryForTesting(target, wsDir)
+    expect(result.allowed).toBe(false)
+    expect(result.denialReason).toBe('TARGET_SYMLINK_ESCAPE')
+  })
+
+  it('denies a target whose canonical path escapes via intermediate symlink', () => {
+    // wsDir/evil_link -> outsideDir ; target = wsDir/evil_link/file.txt
+    // outsideDir/file.txt exists (so existsSync sees the path as live)
+    const symlinkDir = path.join(wsDir, 'evil_link')
+    fs.symlinkSync(outsideDir, symlinkDir)
+    const escapedFile = path.join(outsideDir, 'file.txt')
+    fs.writeFileSync(escapedFile, 'reached outside\n')
+
+    const target = path.join(symlinkDir, 'file.txt')  // existsSync = true via symlink
+    const result = _checkWriteTargetBoundaryForTesting(target, wsDir)
+    expect(result.allowed).toBe(false)
+    // existsSync follows symlink so the file "exists"; intermediate symlink is
+    // detected by realpathSync showing canonical path is outside workspace.
+    expect(['TARGET_SYMLINK_ESCAPE', 'TARGET_OUTSIDE_WORKSPACE']).toContain(result.denialReason)
+  })
+
+  // ── Other denial cases (regression) ─────────────────────────────────────────
+
+  it('denies absolute path outside workspace (no symlinks)', () => {
+    const target = path.join(outsideDir, 'output.txt')
+    const result = _checkWriteTargetBoundaryForTesting(target, wsDir)
+    expect(result.allowed).toBe(false)
+    expect(result.denialReason).toBe('TARGET_OUTSIDE_WORKSPACE')
+  })
+
+  it('denies same-prefix sibling path', () => {
+    const siblingDir = wsDir + '-evil'
+    const target = path.join(siblingDir, 'attack.txt')
+    const result = _checkWriteTargetBoundaryForTesting(target, wsDir)
+    expect(result.allowed).toBe(false)
+    expect(result.denialReason).toBe('TARGET_OUTSIDE_WORKSPACE')
+  })
+
+  it('denies .. traversal', () => {
+    // path.resolve normalizes '..' before realpathSync sees it
+    const target = path.join(wsDir, '..', 'escape.txt')
+    const result = _checkWriteTargetBoundaryForTesting(target, wsDir)
+    expect(result.allowed).toBe(false)
+    expect(result.denialReason).toBe('TARGET_OUTSIDE_WORKSPACE')
   })
 })
 

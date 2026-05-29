@@ -132,29 +132,112 @@ export interface Stage2cRunnerInternalOpts extends Stage2cRunnerOpts {
   _fakeAgentTargetPathForTesting?: string
 }
 
-// ── Fake-agent workspace boundary check (Step 3) ─────────────────────────────
+// ── Fake-agent workspace boundary check (Step 3 + Step 4) ────────────────────
 //
-// Uses path.relative() so that same-prefix siblings (/workspace-evil), absolute
-// outside paths, and '..' traversal are all caught uniformly.
+// Uses fs.realpathSync() to resolve canonical filesystem paths, closing the
+// symlink escape vector. Symlink escapes are denied by test (Step 4).
 //
-// KNOWN LIMITATION: path.resolve() normalizes '..' segments but does NOT follow
-// symlinks. A symlink inside the workspace that points outside is not caught here.
-// Real transport must additionally call fs.realpathSync() on both paths.
+// Denial reasons:
+//   TARGET_OUTSIDE_WORKSPACE  — absolute path outside, same-prefix sibling,
+//                               '..' traversal, or intermediate symlink whose
+//                               canonical path resolves outside the workspace.
+//   TARGET_SYMLINK_ESCAPE     — the target itself, or its deepest existing
+//                               ancestor directory, is a symlink.
 
-function checkWorkspaceBoundary(
+function checkWorkspaceBoundaryCanonical(
   targetPath: string,
   workspacePath: string,
 ): { allowed: boolean; denialReason?: string } {
+  // Resolve canonical workspace root — workspace must already exist.
+  let canonicalWorkspace: string
+  try {
+    canonicalWorkspace = fs.realpathSync(workspacePath)
+  } catch {
+    return { allowed: false, denialReason: 'TARGET_OUTSIDE_WORKSPACE' }
+  }
+
   const resolvedTarget = path.resolve(targetPath)
-  const resolvedWorkspace = path.resolve(workspacePath)
 
-  const rel = path.relative(resolvedWorkspace, resolvedTarget)
+  // ── Case A: target already exists ─────────────────────────────────────────
+  if (fs.existsSync(resolvedTarget)) {
+    // Deny if the target itself is a symlink.
+    try {
+      if (fs.lstatSync(resolvedTarget).isSymbolicLink()) {
+        return { allowed: false, denialReason: 'TARGET_SYMLINK_ESCAPE' }
+      }
+    } catch {
+      return { allowed: false, denialReason: 'TARGET_OUTSIDE_WORKSPACE' }
+    }
 
-  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+    // Canonicalize and confirm the target is inside the canonical workspace.
+    let canonicalTarget: string
+    try {
+      canonicalTarget = fs.realpathSync(resolvedTarget)
+    } catch {
+      return { allowed: false, denialReason: 'TARGET_OUTSIDE_WORKSPACE' }
+    }
+
+    const rel = path.relative(canonicalWorkspace, canonicalTarget)
+    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+      return { allowed: false, denialReason: 'TARGET_OUTSIDE_WORKSPACE' }
+    }
+
+    return { allowed: true }
+  }
+
+  // ── Case B: target does not exist — check its deepest existing ancestor ────
+  //
+  // Walk up from dirname(resolvedTarget) until we find a path that exists.
+  // fs.existsSync follows symlinks, so a non-dangling symlink in the ancestor
+  // chain will be found and then caught by the lstatSync check below.
+  let existingAncestor = path.dirname(resolvedTarget)
+  while (existingAncestor !== path.dirname(existingAncestor)) {
+    if (fs.existsSync(existingAncestor)) break
+    existingAncestor = path.dirname(existingAncestor)
+  }
+
+  // Deny if the existing ancestor is itself a symlink.
+  try {
+    if (fs.lstatSync(existingAncestor).isSymbolicLink()) {
+      return { allowed: false, denialReason: 'TARGET_SYMLINK_ESCAPE' }
+    }
+  } catch {
+    return { allowed: false, denialReason: 'TARGET_OUTSIDE_WORKSPACE' }
+  }
+
+  // Canonicalize the existing ancestor to follow any intermediate symlinks
+  // baked into the path up to this point.
+  let canonicalAncestor: string
+  try {
+    canonicalAncestor = fs.realpathSync(existingAncestor)
+  } catch {
+    return { allowed: false, denialReason: 'TARGET_OUTSIDE_WORKSPACE' }
+  }
+
+  // Canonical ancestor must be inside canonical workspace.
+  const ancestorRel = path.relative(canonicalWorkspace, canonicalAncestor)
+  if (ancestorRel.startsWith('..') || path.isAbsolute(ancestorRel)) {
+    return { allowed: false, denialReason: 'TARGET_OUTSIDE_WORKSPACE' }
+  }
+
+  // The non-existing suffix from ancestor to target must not escape either.
+  const suffix = path.relative(existingAncestor, resolvedTarget)
+  if (suffix.startsWith('..') || path.isAbsolute(suffix)) {
     return { allowed: false, denialReason: 'TARGET_OUTSIDE_WORKSPACE' }
   }
 
   return { allowed: true }
+}
+
+// ── Test-only export — boundary function with real filesystem fixtures ────────
+//
+// Exported so that unit tests can create temp dirs with symlinks and verify
+// the canonical boundary check directly, without routing through the full runner.
+export function _checkWriteTargetBoundaryForTesting(
+  targetPath: string,
+  workspacePath: string,
+): { allowed: boolean; denialReason?: string } {
+  return checkWorkspaceBoundaryCanonical(targetPath, workspacePath)
 }
 
 // ── Fake-agent execution (Step 2/3) — typed tool interface ───────────────────
@@ -167,7 +250,7 @@ function executeFakeAgent(params: {
 }): { event: FakeAgentToolEvent; blocked: boolean } {
   const { task, workspacePath, targetPath, timestamp } = params
 
-  const { allowed, denialReason } = checkWorkspaceBoundary(targetPath, workspacePath)
+  const { allowed, denialReason } = checkWorkspaceBoundaryCanonical(targetPath, workspacePath)
 
   if (!allowed) {
     return {
