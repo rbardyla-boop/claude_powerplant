@@ -517,7 +517,7 @@ What Sprint 3T does NOT prove:
 **Date:** 2026-05-28  
 **Goal:** Instrument the SDK `EnvironmentWorker` bash subprocess to determine (a) which env vars are visible to bash-tool subprocesses, and (b) whether bash can reach an arbitrary local HTTP endpoint. Three credential probes (K1/K2/K3) + one egress probe (E1) + one output-path probe (O1).
 
-**Agent:** `agent_013W2nbHA3z1VEGAG13853is` (Sprint 3U boundary diagnostic, bash-only, always_allow, haiku model)  
+**Agent:** `[REDACTED_LIVE_AGENT_ID]` (Sprint 3U boundary diagnostic, bash-only, always_allow, haiku model)  
 **Report:** `.powerplant/reports/sprint3u-boundary-2026-05-28T00-04-02-504Z.json`
 
 ### Live probe results
@@ -721,7 +721,7 @@ The host creates the output directory as the host user (e.g., uid 1000). The con
 after `mkdirSync` in `runIsolatedExecutor`, before Docker is launched.
 
 **Bug 8 — Stale Sprint 1A environment state causes 404 (FIXED):**
-The Sprint 1A cloud environment (`env_011EQX7YyqAt2F7MQRRDfXGd`) had been deleted on the Anthropic
+The Sprint 1A cloud environment (`[REDACTED_LIVE_ENVIRONMENT_ID]`) had been deleted on the Anthropic
 platform since it was provisioned on 2026-05-26. The provision code reuses the stored state without
 verifying the resource exists, so session creation returned 404. Fixed operationally: deleted stale
 state files (`.powerplant/state/cloud-smoke.json`, `.powerplant/state/sprint3v-executor-probe.json`)
@@ -747,7 +747,7 @@ and re-provisioned both.
 
 | Field | Value |
 |-------|-------|
-| Agent | `agent_01PjWjAATvFJDox4kvX7cfGH` |
+| Agent | `[REDACTED_LIVE_AGENT_ID]` |
 | Session | `[REDACTED_LIVE_SESSION_ID]` |
 | `customToolUseCount` | `1` ✓ |
 | `builtinToolUseCount` | `0` ✓ |
