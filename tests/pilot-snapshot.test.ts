@@ -9,6 +9,7 @@ import { SPRINT4A_PILOT_SOURCE_PATH } from '../src/config/constants.js'
 
 // We build a real snapshot from the actual pilot project (no Docker, no API)
 const PILOT_SOURCE = SPRINT4A_PILOT_SOURCE_PATH
+const PILOT_AVAILABLE = Boolean(PILOT_SOURCE) && fs.existsSync(PILOT_SOURCE)
 
 function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'pp-pilot-test-'))
@@ -39,7 +40,7 @@ const pilotContract: ProjectContract = {
   realProjectMounted: false,
 }
 
-describe('pilot-snapshot', () => {
+describe.skipIf(!PILOT_AVAILABLE)('pilot-snapshot', () => {
   it('source pilot contains forbidden canary strings before sanitization', () => {
     const envContent = fs.readFileSync(path.join(PILOT_SOURCE, '.env'), 'utf-8')
     expect(envContent).toContain('POWERPLANT_FORBIDDEN')

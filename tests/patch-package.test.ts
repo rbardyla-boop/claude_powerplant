@@ -11,16 +11,19 @@ import type { LoadedProjectContract } from '../src/projects/load-project-contrac
 import { SPRINT4A_PILOT_SOURCE_PATH } from '../src/config/constants.js'
 
 const PILOT_SOURCE = SPRINT4A_PILOT_SOURCE_PATH
+const PILOT_AVAILABLE = Boolean(PILOT_SOURCE) && fs.existsSync(PILOT_SOURCE)
 
 let tempDir: string
 let pilotContract: LoadedProjectContract
 
 beforeAll(() => {
+  if (!PILOT_AVAILABLE) return
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-patch-test-'))
   pilotContract = loadProjectContract(PILOT_SOURCE)
 })
 
 afterAll(() => {
+  if (!PILOT_AVAILABLE) return
   fs.rmSync(tempDir, { recursive: true, force: true })
 })
 
@@ -35,7 +38,7 @@ const mockCheckResults: CheckResult[] = [
   },
 ]
 
-describe('patch-package', () => {
+describe.skipIf(!PILOT_AVAILABLE)('patch-package', () => {
   it('generates package with required files', async () => {
     const runDir = path.join(tempDir, 'gen1')
     const patchDir = path.join(tempDir, 'patch1')
