@@ -1133,3 +1133,71 @@ No new credentials, runtime identifiers, or paths introduced. Worktree clean aft
 
 **Next authorized action:** Reviewed forward push of Gate 6B2C commits; post-push:
 initiate capsule trust-root baseline review with explicit authorization.
+
+---
+
+## Gate 6B2C — Capsule Trust-Root Repair (Authorized)
+
+**Date:** 2026-05-29
+**Branch:** `feat/stage2b-preflight`
+
+**Authorization:** Repository owner confirmed the capsule trust-root repair should proceed
+on `feat/stage2b-preflight` before any merge to `master`.
+
+**Objective:** Pin the capsule Dockerfile base by immutable digest, establish a new
+reproducible capsule image identity, re-run the full P0-C/P0-E proof suite, and make
+CI capable of provisioning and verifying the exact trusted evaluator image.
+
+**Root cause summary:** `docker/capsule-v1/Dockerfile` used `FROM node:20-bookworm`
+(mutable tag). The `node:20-bookworm` tag moved after the original `sha256:f496aac9...`
+baseline was established. A clean rebuild on the current base produced `sha256:cc4ae15d...`
+(different from pinned). CI runners, starting with no pre-built image, correctly refused
+candidate execution when `getActualCapsuleImageId()` returned `null`.
+
+**Repair actions:**
+
+1. **Dockerfile base pinned by immutable digest:**
+   `docker/capsule-v1/Dockerfile` updated to:
+   ```
+   FROM node:20-bookworm@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5
+   ```
+   This digest was obtained by `docker pull node:20-bookworm` on 2026-05-29 and confirmed
+   via `docker image inspect node:20-bookworm --format '{{index .RepoDigests 0}}'`.
+
+2. **New capsule image identity baseline:**
+   Clean build (`docker build --no-cache -t powerplant-evaluator:node-test-js-v1 docker/capsule-v1/`)
+   produced:
+   ```
+   sha256:e76106374cf197074f855721173fd0c0b77265ec2c7a5372a9f39fa9b48ef0bc
+   ```
+   - `CAPSULE_V1_EXPECTED_IMAGE_ID` updated in `src/config/constants.ts`.
+   - `docker/capsule-v1/build-manifest.json` updated with new `imageId`, `baseImage`,
+     `baseImageDigest`, and updated `portabilityNote` explaining digest-pinned
+     reproducibility requirement.
+
+3. **Full P0-C/P0-E proof suite re-run against new baseline:**
+   - P0-C capsule suite: 14/14 tests pass (F1–F12 fixture controls + receipt structure +
+     terminal result `STAGE_2B_P0_C_CAPSULE_PROVEN`)
+   - P0-C oracle execution suite: 9/9 tests pass
+   - P0-E extended suite: 32/32 tests pass (F1–F16, including F5b direct-IP, F5c Docker
+     socket absence, F13–F15 result-forgery resistance, F16 image-identity mismatch)
+   Full test suite: 1042/1042 passing, typecheck clean.
+
+4. **CI workflow updated** (`add Build and verify capsule evaluator image` step):
+   Step runs before `npm test`; builds the image from the digest-pinned Dockerfile;
+   reads expected ID from `docker/capsule-v1/build-manifest.json`; fails immediately
+   on identity mismatch. Node.js 20 is available on `ubuntu-latest` for the JSON parse.
+
+5. **Release Ledger Gate 6B2C** updated from PARTIALLY BLOCKED to CLOSED.
+
+**Accepted claim:** The capsule evaluator image is now CI-reproducible from a
+digest-pinned Dockerfile. The P0-C/P0-E controls (network isolation, filesystem
+isolation, timeout, output cap, env scrubbing, readonly rootfs, image identity
+verification) are verified against the new baseline. The Stage 2B L1 accepted verdict
+and trusted-directory limitation are unchanged.
+
+**Validation:** 1042/1042 tests passing; typecheck clean. No new credentials, runtime
+identifiers, or operator-local paths introduced.
+
+**Next authorized action:** Push the capsule repair commit stack; verify hosted CI passes;
+open final PR from `feat/stage2b-preflight` into `master`.

@@ -230,7 +230,7 @@ export const STAGE2B_TOOL_POLICY_VERSION = 'stage2b-tool-policy-v1' as const
 // a different image, execution is refused. See docker/capsule-v1/build-manifest.json.
 export const STAGE2B_CAPSULE_EVALUATOR_PROFILE_ID = 'capsule-v1' as const
 export const CAPSULE_DOCKER_IMAGE = 'powerplant-evaluator:node-test-js-v1' as const
-export const CAPSULE_V1_EXPECTED_IMAGE_ID = 'sha256:f496aac93ff3459a5142f2e37aedb025c414f5a7244e299160ae82a3aa29ad48' as const
+export const CAPSULE_V1_EXPECTED_IMAGE_ID = 'sha256:e76106374cf197074f855721173fd0c0b77265ec2c7a5372a9f39fa9b48ef0bc' as const
 export const CAPSULE_ORACLE_MOUNT_TARGET = '/oracle' as const
 export const CAPSULE_WORKSPACE_MOUNT_TARGET = '/workspace' as const
 export const CAPSULE_OUTPUT_MOUNT_TARGET = '/output' as const

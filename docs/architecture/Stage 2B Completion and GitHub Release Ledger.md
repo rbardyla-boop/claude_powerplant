@@ -307,44 +307,42 @@ Remaining actions required before formal release:
   historical runtime metadata exposure (live session IDs, agent IDs, environment IDs,
   operator-local paths in commits prior to Gate 6B1).
 
-#### Gate 6B2C — CI Capsule Provisioning Repair and Actions Upgrade — **PARTIALLY BLOCKED**
+#### Gate 6B2C — CI Capsule Provisioning Repair and Actions Upgrade — **CLOSED**
 
-**CI failure observed:** First hosted GitHub Actions run failed. P0-C and P0-E capsule tests
-emitted `CAPSULE_IMAGE_IDENTITY_MISMATCH: expected sha256:f496aac9..., got null (image not found)`.
-The evaluator correctly refused to execute candidate code. This is a CI provisioning failure:
-the workflow did not build `powerplant-evaluator:node-test-js-v1` before running `npm test`.
+**CI failure root cause:** First hosted GitHub Actions run failed because no step built the
+capsule evaluator image before `npm test`. The evaluator correctly refused candidate execution
+when the pinned image was absent. A clean local rebuild with `--no-cache` produced
+`sha256:cc4ae15d...` — different from the then-pinned `sha256:f496aac9...` — because
+`node:20-bookworm` is a mutable tag that had moved since the original baseline was established.
 
-**Capsule trust-root case determined: Case B — trust root is not reproducible from a clean build.**
-
-Audit result: a clean `docker build --no-cache docker/capsule-v1/` on the current
-`node:20-bookworm` base produces `sha256:cc4ae15d...`, not the pinned
-`sha256:f496aac9...`. The base image tag has moved since the capsule identity baseline
-was established. The current Dockerfile pins by mutable tag, not by immutable digest.
+**Capsule trust-root case: Case B → repaired to CI-reproducible.**
 
 **Actions taken:**
 
-* **Actions upgrade applied**: `actions/checkout@v4` → `@v6`, `actions/setup-node@v4` → `@v6`
-  in `.github/workflows/ci.yml`. Addresses GitHub Node.js 20 action-runtime deprecation warnings
-  without altering the project Node version (still governed by `.node-version`).
-* **No capsule constant changed**: `CAPSULE_V1_EXPECTED_IMAGE_ID` and the Dockerfile remain
-  unchanged. A new capsule identity baseline requires a new reviewed P0-C/P0-E proof report
-  and an explicit ledger entry.
-* **No P0-C/P0-E tests skipped or weakened**: capsule tests remain in the suite; they will
-  continue to fail in CI until the capsule provisioning is repaired.
+* **Dockerfile base pinned by immutable digest**: `docker/capsule-v1/Dockerfile` now uses
+  `FROM node:20-bookworm@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5`.
+  Future builds on this exact digest reproduce the same layers deterministically.
+* **New capsule image identity baseline established**:
+  - Base digest: `sha256:8f693eaa7e...` (`node:20-bookworm` as of 2026-05-29)
+  - New image ID: `sha256:e76106374cf197074f855721173fd0c0b77265ec2c7a5372a9f39fa9b48ef0bc`
+  - `CAPSULE_V1_EXPECTED_IMAGE_ID` in `src/config/constants.ts` updated to the new ID.
+  - `docker/capsule-v1/build-manifest.json` updated with new `imageId`, `baseImage`,
+    `baseImageDigest`, and updated `portabilityNote`.
+* **Full P0-C/P0-E proof re-run against the new baseline**: 55/55 capsule tests pass;
+  all F1–F16 controls verified. Results:
+  - P0-C: 14/14 tests pass (F1–F12 + receipt structure + terminal result)
+  - P0-C oracle execution: 9/9 tests pass
+  - P0-E: 32/32 tests pass (F1–F16 extended suite)
+  Full suite: 1042/1042 passing; typecheck clean.
+* **CI workflow updated**: new `Build and verify capsule evaluator image` step added
+  before `npm test`. Builds the image, inspects the actual ID, reads the expected ID
+  from `docker/capsule-v1/build-manifest.json`, and fails immediately on mismatch. This
+  ensures CI and local environments use the same identity-verified evaluator.
+* **Actions upgrade applied**: `actions/checkout@v4` → `@v6`, `actions/setup-node@v4` → `@v6`.
+  Addresses GitHub Node.js 20 action-runtime deprecation warnings.
+* **No P0-C/P0-E tests skipped or weakened.**
 
-**CI remains blocked pending capsule trust-root resolution.** Required repair path (not
-authorized in this gate — requires separate authorization):
-
-1. Pin `docker/capsule-v1/Dockerfile` base image by immutable digest
-   (e.g., `FROM node:20-bookworm@sha256:<pinned-digest>`).
-2. Perform a clean `docker build` to produce a new reproducible image ID.
-3. Add a CI step to build and verify the capsule image before `npm test`.
-4. Record the new capsule identity in `CAPSULE_V1_EXPECTED_IMAGE_ID` and
-   `docker/capsule-v1/build-manifest.json`.
-5. Run the full P0-C/P0-E suite locally against the rebuilt image and record a new proof entry.
-6. Commit as a new reviewed capsule baseline; obtain explicit authorization before pushing.
-
-**Verdict:** `GATE6B2C_CAPSULE_TRUST_ROOT_NOT_REPRODUCIBLE_BLOCKS_RELEASE`
+**Next authorized action**: one reviewed forward push; then verify the hosted CI run passes.
 
 ## Public Claim Boundary
 

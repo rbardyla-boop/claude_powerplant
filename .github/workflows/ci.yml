@@ -32,6 +32,17 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Build and verify capsule evaluator image
+        run: |
+          docker build -t powerplant-evaluator:node-test-js-v1 docker/capsule-v1/
+          ACTUAL_ID=$(docker image inspect powerplant-evaluator:node-test-js-v1 --format '{{.Id}}')
+          EXPECTED_ID=$(node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('docker/capsule-v1/build-manifest.json','utf8')); process.stdout.write(m.imageId)")
+          if [ "$ACTUAL_ID" != "$EXPECTED_ID" ]; then
+            echo "CAPSULE_IMAGE_IDENTITY_MISMATCH: expected $EXPECTED_ID, got $ACTUAL_ID"
+            exit 1
+          fi
+          echo "Capsule image identity verified: $ACTUAL_ID"
+
       - name: Test
         run: npm test
         # No .env file is present in CI. Repository-contained unit tests pass
