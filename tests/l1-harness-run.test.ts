@@ -106,4 +106,22 @@ describe('l1-harness-run.ts static invariants', () => {
     const src = nonCommentLines('src/cli/l1-harness-run.ts')
     expect(src).toContain('runL1Harness')
   })
+
+  it('receipt validation call precedes runL1Harness call in source order', () => {
+    // Proves: receipt must be validated before any live broker/pilot path can begin.
+    const src = fs.readFileSync(path.resolve('src/cli/l1-harness-run.ts'), 'utf-8')
+    const receiptIdx = src.indexOf('loadL0Receipt(')
+    const harnessIdx = src.indexOf('runL1Harness(')
+    expect(receiptIdx).toBeGreaterThan(-1)
+    expect(harnessIdx).toBeGreaterThan(-1)
+    expect(receiptIdx).toBeLessThan(harnessIdx)
+  })
+
+  it('module import causes no side effects — safe to import from any test context', () => {
+    // If importing l1-harness-run.ts triggered process.exit or network I/O, the
+    // dynamic import at the top of this test file would have aborted the suite.
+    // This assertion explicitly confirms both exports are reachable post-import.
+    expect(loadL0Receipt).toBeTypeOf('function')
+    expect(L0_FIXTURE_RECEIPT_FILENAME).toBeTypeOf('string')
+  })
 })

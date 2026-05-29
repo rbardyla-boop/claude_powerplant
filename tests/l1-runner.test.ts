@@ -299,6 +299,18 @@ describe('L1 runner static invariants', () => {
     expect(match).not.toBeNull()
     expect(match![0]).not.toContain('_stateRootForTesting')
   })
+
+  it('pilot passes builtinToolUseCount with -1 sentinel on both return paths when broker is null', () => {
+    // Proves: a broker exception (before or after observing tool use) cannot produce
+    // builtinToolUseCount=0, because both pilot return paths use `?? -1`, not `?? 0`.
+    // The harness then rejects -1 (proven by the builtinToolUseCount enforcement tests).
+    const src = fs.readFileSync(
+      path.resolve('src/sessions/run-skill-guided-sanitized-project-pilot.ts'), 'utf-8',
+    )
+    expect(src).not.toContain('builtinToolUseCount: brokerResult?.builtinToolUseCount ?? 0')
+    const sentinels = src.match(/builtinToolUseCount:.*brokerResult.*\?\? -1/g) ?? []
+    expect(sentinels.length).toBeGreaterThanOrEqual(2)
+  })
 })
 
 // ── POWERPLANT_HOME canonical containment guard ───────────────────────────────
