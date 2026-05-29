@@ -166,3 +166,32 @@ Verified from a clean detached worktree at `558881d` with no local changes:
 | Should RC5 be rewritten or retagged? | **No — freeze and document** |
 | May RC5 be used as the forward QA candidate after cleanup changes? | **No — cleanup creates RC6** |
 | Is RC6 preparation authorized? | **Yes** |
+
+---
+
+## 7. Post-RC6 Correction — Stage 2B Status Amendment
+
+> **Added**: 2026-05-29 on `feat/rc6b-provenance-correction`
+
+Section 3 of this addendum records Stage 2B with verdict
+`A — SKILL_LIFECYCLE_STAGE_2B_SANITIZED_INVOCATION_COMMITTED_AND_BASELINED`.
+That verdict is accurate for what the original closure record proved: code committed,
+24 unit tests passing, typecheck clean.
+
+**It does not mean Stage 2B was accepted for live trusted invocation.**
+
+A subsequent audit found that the RC6A annotation drew an unwarranted inference from
+this verdict, and identified five code-level defects in the committed Stage 2B
+implementation that were not captured by the unit test suite. Stage 2B is therefore:
+
+```
+COMMITTED AND UNIT-TESTED — NOT ACCEPTED FOR TRUSTED LIVE INVOCATION
+```
+
+Full defect descriptions, RC6A disposition, and the required repair path are in:
+
+- `docs/architecture/RC6A_REPLAY_STOP_AND_SCOPE_CORRECTION.md`
+- `docs/architecture/SKILL_LIFECYCLE_STAGE_2B_CLOSURE_SUPERSESSION.md`
+
+The original closure record (`SKILL_LIFECYCLE_STAGE_2B_CLOSURE_RECORD.md`) is preserved
+unchanged. This addendum section and the documents above constitute the correction record.
