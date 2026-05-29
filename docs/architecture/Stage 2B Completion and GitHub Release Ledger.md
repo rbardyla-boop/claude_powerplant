@@ -186,6 +186,61 @@ Required outcomes:
 * Public README contains no overclaims.
 * Release version follows the repository’s actual version convention.
 
+#### Gate 6A — Secret and Credential Scan — **COMPLETED**
+
+No private keys or raw API credentials were found in tracked files at HEAD.
+
+The following already-public real runtime metadata was identified in the current release surface:
+
+* A live Managed Agents session identifier in `docs/BUILD_LOG.md` (class: live session ID)
+* Live `sessionId`, `agentId`, and `environmentId` values in `data/sprint1b-allow-report.json`
+  and `data/sprint1b-deny-report.json` (class: live runtime IDs)
+* Operator-local absolute paths in `.claude/settings.json`, `src/config/constants.ts`,
+  `docs/BUILD_LOG.md`, and five test files (class: operator-local filesystem path)
+* Six runtime acceptance artifacts tracked under `.powerplant/acceptance/gate4-*/`
+  (class: operator-local runtime state)
+
+Historical exposure: these items exist in already-public Git history. No history rewrite was
+performed; a separately authorized rebase/filter-branch decision is required for that.
+
+#### Gate 6B1 — Forward Sanitation of Current Release Surface — **COMPLETED**
+
+Actions taken:
+
+* Removed six runtime acceptance artifacts from tracked tree
+  (`.powerplant/acceptance/gate4-1780075485/**`)
+* Redacted live session identifier in `docs/BUILD_LOG.md`
+* Redacted live session, agent, and environment IDs in `data/sprint1b-allow-report.json`
+  and `data/sprint1b-deny-report.json`; sanitized evidence structure preserved
+* Removed operator-local `.claude/settings.json` from tracked tree (personal permission
+  overrides for a different project; Case B local override)
+* Replaced hardcoded operator-local path in `src/config/constants.ts`
+  (`SPRINT4A_PILOT_SOURCE_PATH`) with env-variable-driven resolution
+* Updated five test files to import `SPRINT4A_PILOT_SOURCE_PATH` from constants
+  instead of hardcoding the operator path
+* Replaced adversarial sentinel path in `tests/synthetic-promoted-guidance-pilot.test.ts`
+  with a synthetic non-operator path; test intent preserved
+* Redacted two operator-local path references in `docs/BUILD_LOG.md` (Sprint 4A checklist
+  and key proof points)
+* Added narrow `.gitignore` rules to prevent recurrence:
+  - `.powerplant/acceptance/` — runtime acceptance artifacts
+  - `data/sprint1b-*.json` — runtime probe output
+  - `.claude/settings.json` — personal local Claude permission overrides
+* Updated `vitest.config.ts` to load `.env` via `vite.loadEnv` so the operator-local
+  pilot path is supplied at test time from the gitignored `.env` file
+
+Recurrence prevention: the added `.gitignore` rules block future accidental tracking of
+the same artifact classes.
+
+Historical exposure remains on the already-public remote for commits prior to this gate.
+A separate authorized history-rewrite decision is required to address that.
+
+No release tag or GitHub launch announcement is authorized until Gate 6B2 hardening
+(CI, branch protection, README review) is complete.
+
+The accepted Stage 2B L1 live verdict (`L1_LIVE_ACCEPTED_UNDER_TRUSTED_DIRECTORY_ASSUMPTION`)
+is unchanged.
+
 ## Public Claim Boundary
 
 Before a successful live L1 run:
