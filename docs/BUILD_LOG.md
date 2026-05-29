@@ -1,4 +1,43 @@
-# Build Log
+# BUILD LOG — Claude Powerplant Engineering Journal
+
+## Purpose
+
+`docs/BUILD_LOG.md` is the ongoing chronological engineering journal for shipped work, investigations, failed approaches, accepted repairs, and next authorized actions. It is intended to preserve the reasoning trail without rewriting history.
+
+## Authority Boundary
+
+This document is **non-normative**.
+- For completion status, the [Release Ledger](architecture/Stage%202B%20Completion%20and%20GitHub%20Release%20Ledger.md) controls.
+- For acceptance evidence, the [Stage 2B L1 Acceptance Report](acceptance/STAGE_2B_L1_LIVE_ACCEPTANCE_REPORT.md) controls.
+- For code truth, committed tests and implementation control.
+- If this log conflicts with those sources, the authoritative source wins; correct this log in a later entry rather than silently rewriting it.
+
+## Entry Discipline
+
+Every material project task should append one short entry containing:
+- Date, branch, and ending commit hash
+- Objective
+- Files/surfaces changed
+- Validation result
+- Accepted claim or blocker
+- Next authorized action
+
+## Safety Discipline
+
+Do **not** record:
+- Live session identifiers
+- API keys, environment values, or credentials
+- Raw external transcripts
+- Absolute operator-local paths
+- Unsanitized runtime artifacts
+
+Use redaction tokens such as:
+- `[REDACTED_LIVE_SESSION_ID]`
+- `[REDACTED_LIVE_AGENT_ID]`
+- `[REDACTED_LIVE_ENVIRONMENT_ID]`
+- `[REDACTED_LOCAL_PATH]`
+
+---
 
 ## Sprint 0 — Config + Contracts
 
@@ -898,3 +937,23 @@ would have created a false safety boundary. Work stopped immediately.
 
 **Next step:** Create Singularity Inc. `.powerplant/` contract (narrow QA-only scope),
 run `powerplant inspect` against it, confirm no pilot paths appear in the disclosure.
+
+---
+
+## Gate 6 — Public Release Sanitation (Stage 2B)
+
+**Date:** 2026-05-29
+**Branch:** feat/stage2b-preflight
+**Objective:** Sanitize current release surface and establish public documentation.
+
+**Gate 6A finding:** No API credentials or private keys found. Real live runtime identifiers and operator-local absolute paths were discovered in already-public tracked files and Git history.
+
+**Gate 6B1 forward sanitation:** Identified runtime metadata removed or redacted from the current tracked tree. Operator-local paths removed from configuration and source. Precise `.gitignore` recurrence-prevention rules added. Empty-path filesystem fallback replaced with explicit fail-closed resolver. Pilot-dependent tests made conditionally skippable in clean-checkout environments.
+
+**Gate 6B2A documentation:** README updated with accurate verified status and explicit claim boundaries. Build log policy established. Release ledger aligned.
+
+**Validation:** 1042/1042 tests passing (local configured checkout); 1002 passing + 40 conditionally skipped (clean checkout without pilot source); typecheck clean.
+
+**Historical exposure:** Earlier non-credential runtime metadata (live session IDs, agent IDs, environment IDs, operator-local paths) remains in already-public Git history. No history rewrite has been performed. Any such decision requires separate explicit authorization.
+
+**Next authorized action:** Gate 6B2B — CI configuration, SECURITY.md, GitHub branch protection, secret scanning, license verification, and optional history-rewrite decision.

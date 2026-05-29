@@ -158,22 +158,18 @@ BUILDLOG.md remains authorized and non-normative: if it conflicts with this ledg
 acceptance plan, committed validation tests, or the final acceptance receipt, those
 authoritative artifacts control.
 
-### Gate 5 — Stage 2B Closeout Documentation — **IN PROGRESS**
+### Gate 5 — Stage 2B Closeout Documentation — **CLOSED** (Gate 6B2A)
 
-Completed in this commit:
+Completed:
 
 * Sanitized Stage 2B L1 acceptance report added at
   `docs/acceptance/STAGE_2B_L1_LIVE_ACCEPTANCE_REPORT.md`.
 * Gate 4 section in this ledger closed with exact trust-boundary language and sanitized
   evidence table.
-
-Remaining before Gate 5 can be closed:
-
-* README truthfully states proven and unproven surfaces (deferred to Gate 6 to avoid premature
-  publication language).
-* Threat model and security policy reviewed for accuracy.
-* Confirmation that runtime artifacts and credentials are excluded from version control
-  (pre-existing `.gitignore` covers runtime state; Gate 6 will do full history scan).
+* README updated (Gate 6B2A) to truthfully state proven surfaces, limitations, and claim
+  boundaries; no overclaims present.
+* Runtime artifacts and credentials confirmed excluded from version control; `.gitignore`
+  recurrence-prevention rules added at Gate 6B1; full history scan completed at Gate 6A.
 
 ### Gate 6 — GitHub Release Readiness
 
@@ -247,11 +243,50 @@ the same artifact classes.
 Historical exposure remains on the already-public remote for commits prior to this gate.
 A separate authorized history-rewrite decision is required to address that.
 
+Recurrence prevention: the added `.gitignore` rules block future accidental tracking of
+the same artifact classes.
+
+Historical exposure remains on the already-public remote for commits prior to this gate.
+A separate authorized history-rewrite decision is required to address that.
+
 No release tag or GitHub launch announcement is authorized until Gate 6B2 hardening
-(CI, branch protection, README review) is complete.
+(CI, branch protection, SECURITY.md, license verification) is complete.
 
 The accepted Stage 2B L1 live verdict (`L1_LIVE_ACCEPTED_UNDER_TRUSTED_DIRECTORY_ASSUMPTION`)
 is unchanged.
+
+#### Gate 6B2A — Public Documentation Alignment — **COMPLETED**
+
+Actions taken:
+
+* README rewritten with accurate verified status, explicit trust-boundary language, and bounded
+  claim scope; all overclaims removed.
+* `docs/BUILD_LOG.md` policy block added at top: establishes non-normative authority boundary,
+  entry discipline, and safety discipline for future entries.
+* Gate 6 milestone entry appended to `docs/BUILD_LOG.md` recording Gate 6A/6B1/6B2A work.
+* Gate 5 closed in this ledger (all Gate 5 conditions now satisfied).
+* Documentation authority hierarchy established in README.
+* No production code, tests, or acceptance evidence modified.
+
+Validation: `1042/1042` tests passing (local configured checkout); typecheck clean;
+no live runtime identifiers or operator-local paths introduced.
+
+#### Gate 6B2B — CI, Security Hardening, and Release Authorization — **PENDING**
+
+Required before public release:
+
+* CI workflow: configure GitHub Actions to run `npm test` and `npx tsc --noEmit` from a
+  clean checkout; verify pilot-dependent tests skip correctly when `SPRINT4A_PILOT_SOURCE_PATH`
+  is unset.
+* Restricted `.env` loading review: confirm `vitest.config.ts` `.env` load does not
+  leak secrets in CI.
+* SECURITY.md: create root-level security policy with contact method and scope.
+* License verification: confirm or add an appropriate root-level `LICENSE` file.
+* GitHub branch protection: require passing CI checks on `master`/`main` before merge.
+* Secret scanning and push protection: enable GitHub Advanced Security secret scanning.
+* Optional: separate authorized decision on history-rewrite to address already-public
+  historical runtime metadata exposure (live session IDs, agent IDs, environment IDs,
+  operator-local paths in commits prior to Gate 6B1).
 
 ## Public Claim Boundary
 
