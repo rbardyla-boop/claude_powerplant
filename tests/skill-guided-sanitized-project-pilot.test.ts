@@ -1453,10 +1453,65 @@ test('T39 — production writer emits sessionStartedAt in Phase B — present an
   const parsed = Date.parse(sessionStartedAt as string)
   expect(isNaN(parsed)).toBe(false)
 
-  // Must follow Phase A invocationTimestamp (broker invocation starts after Phase A is written)
+  // Must strictly follow Phase A invocationTimestamp (broker start is after Phase A is written).
+  // The L1 harness enforces strict <; equality is rejected.
   const invocationTimestamp = phaseA!['invocationTimestamp']
   expect(typeof invocationTimestamp).toBe('string')
   const tsA = Date.parse(invocationTimestamp as string)
   expect(isNaN(tsA)).toBe(false)
-  expect(parsed).toBeGreaterThanOrEqual(tsA)
+  expect(parsed).toBeGreaterThan(tsA)
+})
+
+// ── T40: Same-millisecond clock freeze — spin-loop repair guarantees strict ordering ─
+//
+// Reproduces the condition where Date.now() returns the same value as the parsed
+// Phase A invocationTimestamp for several iterations (simulating a frozen-clock
+// same-millisecond scenario). Proves the spin-loop repair exits only when the
+// real clock has advanced, and that Phase B sessionStartedAt is strictly after
+// Phase A invocationTimestamp.
+
+test('T40 — spin-loop repair resolves same-millisecond clock freeze: sessionStartedAt strictly after invocationTimestamp', async () => {
+  const { contentHash } = await makePromotedSkill('test-skill-t40')
+  vi.mocked(loadProjectContract).mockReturnValue(makeFakeContract() as never)
+  vi.mocked(buildPilotSnapshot).mockReturnValue(makeFakeSnapshot(os.tmpdir()) as never)
+  vi.mocked(verifySourceUnchanged).mockReturnValue({ sourceUnmodified: true, changedFiles: [], missingFiles: [], newFiles: [] })
+  vi.mocked(runProjectPilotBrokerSession).mockResolvedValue(makeBrokerResult() as never)
+
+  // Capture a baseline time. Date.now() is mocked to return this value for
+  // the first several calls (simulating the clock being frozen at the same
+  // millisecond as invocationTimestamp), then to return baseline + 1000 so
+  // the spin loop exits with a value guaranteed to be > any invocationTimestamp
+  // captured by new Date().toISOString() during the same synchronous window.
+  const baseline = Date.now()
+  let nowCallCount = 0
+  const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+    nowCallCount++
+    return nowCallCount <= 10 ? baseline : baseline + 1000
+  })
+
+  try {
+    await runSkillGuidedSanitizedProjectPilot({
+      skillRequest: { skillId: 'test-skill-t40', expectedHash: contentHash },
+      pilotSourcePath: '/fake/path',
+      controlClient: {} as never,
+      state: makeFakeState() as never,
+    })
+  } finally {
+    nowSpy.mockRestore()
+  }
+
+  const records = readAuditLog()
+  const phaseA = records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_A)
+  const phaseB = records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_B)
+
+  expect(phaseA).toBeDefined()
+  expect(phaseB).toBeDefined()
+
+  const tsA = Date.parse(phaseA!['invocationTimestamp'] as string)
+  const tsB = Date.parse(phaseB!['sessionStartedAt'] as string)
+  expect(isNaN(tsA)).toBe(false)
+  expect(isNaN(tsB)).toBe(false)
+
+  // Spin-loop repair must ensure strict ordering even when the clock was frozen
+  expect(tsB).toBeGreaterThan(tsA)
 })

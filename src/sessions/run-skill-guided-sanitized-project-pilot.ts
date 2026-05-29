@@ -400,7 +400,17 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
   let brokerResult: ProjectBrokerSessionResult | null = null
   let brokerException: Error | null = null
   let budgetExhausted = false
-  const sessionStartedAt = new Date().toISOString()
+
+  // Guarantee sessionStartedAt is strictly after invocationTimestamp.
+  // The harness enforces Date.parse(phaseA.invocationTimestamp) < Date.parse(phaseB.sessionStartedAt).
+  // In fast execution both could land on the same millisecond, which would fail that invariant.
+  // Spin on the real wall clock until it strictly advances past the Phase A timestamp.
+  const tsA = Date.parse(invocationTimestamp)
+  let sessionStartedAtMs = Date.now()
+  while (sessionStartedAtMs <= tsA) {
+    sessionStartedAtMs = Date.now()
+  }
+  const sessionStartedAt = new Date(sessionStartedAtMs).toISOString()
 
   try {
     brokerResult = await runProjectPilotBrokerSession({
