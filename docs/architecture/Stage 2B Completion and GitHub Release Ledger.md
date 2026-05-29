@@ -9,13 +9,20 @@ This ledger is the canonical finish line. No task may expand beyond it without e
 ## Current Checkpoint
 
 * Branch: `feat/stage2b-preflight`
-* Reported checkpoint HEAD: `b4b6ff1`
+* Accepted checkpoint HEAD: `36b9efc` (bounded/yielding timestamp capture repair)
 * P0-A / P0-B / P0-C: previously proven and not to be reopened without evidence of regression
 * L1 temporal evidence field: `sessionStartedAt`
 * Contract meaning of `sessionStartedAt`: timestamp captured immediately before the broker invocation begins, as defined by the Stage 2B L1 acceptance-plan boundary
 * Live Anthropic/API call: not yet authorized
 * Live L1 session: not yet executed
 * L2–L7: out of scope
+
+## BUILDLOG.md Authorization
+
+`BUILDLOG.md`, introduced at commit `c841065`, is an authorized Stage 2B development journal
+written by the project operator. It records the repair trail and implementation reasoning for
+Gate 1 work. It is **non-normative**: if it conflicts with this ledger, the acceptance plan,
+committed validation tests, or any final acceptance receipt, those authoritative artifacts control.
 
 ## Frozen Exclusions
 
@@ -31,30 +38,29 @@ Do not:
 
 ## Remaining Gates
 
-### Gate 1 — Non-Live Reproducibility Repair
+### Gate 1 — Non-Live Reproducibility Repair — **CLOSED** (`36b9efc`)
 
-Open defects:
+Repairs completed (commits `db4dd08`, `1ac408b`, `c841065`, `36b9efc`):
 
-1. T39 currently allows `sessionStartedAt === phaseA.invocationTimestamp`, while the harness requires strict `<`.
-2. L1 tests currently fail in Claude’s environment because the acceptance test root assumes `/tmp`.
+1. Strict temporal ordering: `sessionStartedAt` guaranteed strictly after `invocationTimestamp`
+   via bounded async spin (T39 strict assertion, T40 frozen-clock proof, T41/T42 fail-closed proofs).
+2. Portable acceptance temp root: `ACCEPTANCE_HOME_PREFIX` uses `os.tmpdir()`, containment preserved.
+3. Bounded timestamp capture: `awaitStrictlyAfterTimestamp()` uses wall-clock truth with
+   monotonic timeout; fails closed on frozen/regressed clock rather than hanging.
 
-Required outcomes:
+Validated at `36b9efc`: `1021/1021` tests passing across 56 files, `npx tsc --noEmit` clean.
 
-* Production temporal evidence is truthfully guaranteed to satisfy strict ordering.
-* A deterministic same-millisecond test proves the repair.
-* Temporary-directory logic is portable without weakening write containment.
-* `npm test` and `npx tsc --noEmit` pass in a clean environment.
+No live API call or live session was executed.
 
-No live API call or live session is permitted.
-
-### Gate 2 — Immutable Fixture Binding and Production CLI
+### Gate 2 — Immutable Fixture Binding and Production CLI — **IN PROGRESS**
 
 Required outcomes:
 
-* `fixtureAContentHash` is bound to immutable L0 evidence.
-* A real L1 CLI entrypoint exists.
-* The CLI calls only `runL1Harness`, never `_runL1HarnessForTesting`.
-* Missing, altered or malformed receipts fail closed.
+* `fixtureAContentHash` is bound to immutable L0 evidence (`l0-fixture-receipt.json` written
+  by `acceptance-bootstrap.ts` after promotion; never recomputed from mutable registry at CLI time).
+* A real L1 CLI entrypoint (`src/cli/l1-harness-run.ts`) exists and calls only `runL1Harness`.
+* The CLI never imports or calls `_runL1HarnessForTesting`.
+* Missing, altered or malformed receipts fail closed before any live work.
 * All tests and typecheck pass.
 
 No live API call or live session is permitted.
