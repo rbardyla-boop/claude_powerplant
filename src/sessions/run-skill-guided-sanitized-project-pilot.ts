@@ -17,6 +17,24 @@
 //   - load-project-contract.ts
 //   - build-pilot-snapshot.ts
 //
+// Two-hash composition model (Blocker 1):
+//   operatorTaskHash  = SHA-256 of the immutable operator task text (TASK_DESCRIPTION)
+//   envelopeHash      = SHA-256 of the rendered skill guidance envelope text
+//   agentMessage      = operator task (verbatim) + clearly delimited guidance section
+//   The task must appear verbatim in agentMessage; guidance is supplementary and subordinate.
+//
+// Broker-authoritative truth model (Blocker 2):
+//   patchEligibleForApplication comes from brokerResult.classification.patchEligibleForApplication.
+//   Wrapper never re-derives patch eligibility independently.
+//
+// Isolation evidence model (Blocker 3):
+//   CapsuleIsolationRecord separates declaredPolicy from observedEvidence.
+//   Static policy declarations must not populate observedEvidence fields.
+//
+// Phase A chronology (Blocker 4 — Option B):
+//   loadProjectContract() and buildPilotSnapshot() execute before appendPhaseARecord().
+//   Phase A record documents this explicitly via recordPosition: 'post-contract-pre-session'.
+//
 // Single terminal funnel requirement (Audit 2A):
 //   Phase A persists before any broker call.
 //   EVERY session-started terminal outcome routes through one Phase B write.
@@ -35,7 +53,7 @@ import {
   type SkillInvocationPhaseBRecord,
   type LiveRunTerminationReason,
   type LiveRunFinalOutcome,
-  type CapsuleIsolationIndicators,
+  type CapsuleIsolationRecord,
 } from '../skills/skill-invocation-audit.js'
 import { runProjectPilotBrokerSession } from '../broker/project-tool-broker.js'
 import { loadProjectContract } from '../projects/load-project-contract.js'
@@ -44,7 +62,6 @@ import { verifySourceUnchanged } from '../projects/verify-source-unchanged.js'
 import type { ProjectBrokerSessionResult } from '../broker/project-tool-broker.js'
 import type { CheckResult } from '../contracts/verification-preflight-report.js'
 import {
-  SPRINT4A_TOOL_FINALIZE,
   SPRINT4A_TOOL_WRITE_FILE,
   SPRINT4A_MAX_TOOL_CALLS,
   SPRINT4A_FINAL_RESPONSE,
@@ -70,7 +87,8 @@ export class SkillGuidedInvocationError extends Error {
       | 'LIVE_HASH_MISMATCH'
       | 'DISCLAIMER_MISSING'
       | 'ENVELOPE_HASH_FAILED'
-      | 'PHASE_A_AUDIT_FAILED',
+      | 'PHASE_A_AUDIT_FAILED'
+      | 'AGENT_MESSAGE_COMPOSITION_FAILED',
     message: string
   ) {
     super(message)
@@ -93,7 +111,9 @@ export interface SkillGuidedRunReport {
   runnerType: typeof SKILL_GUIDED_PILOT_RUNNER_TYPE
   sanitizedProjectId: string
   skillId: string
+  operatorTaskHash: string
   envelopeHash: string
+  compositionPolicyVersion: string
   auditRecordPath: string
   sessionId: string | null
   finalOutcome: LiveRunFinalOutcome
@@ -112,11 +132,33 @@ export interface SkillGuidedRunReport {
   } | null
 }
 
-// ── Capsule isolation constants (hardcoded; never derived from skill text) ────
+// ── Composition constants ─────────────────────────────────────────────────────
+//
+// The composition policy ensures the operator task appears verbatim and the
+// skill guidance is clearly labelled as supplementary and subordinate.
+// Changing this policy version constant signals a breaking composition change.
 
-const CAPSULE_ISOLATION: CapsuleIsolationIndicators = {
-  executorNetworkDisabled: true,
-  noCredentialsPassedToExecutor: true,
+const TASK_FIRST_COMPOSITION_POLICY_VERSION = 'task-first-guidance-supplementary-v1'
+
+const GUIDANCE_SECTION_HEADER = '[OPERATOR-APPROVED SKILL GUIDANCE — SUPPLEMENTARY ONLY]'
+const GUIDANCE_SECTION_FOOTER = '[END SKILL GUIDANCE — OPERATOR TASK ABOVE TAKES PRECEDENCE]'
+
+// ── Capsule isolation policy ──────────────────────────────────────────────────
+//
+// These are operator-declared policy controls. They are NOT per-run observations.
+// Per-run observedEvidence defaults to 'unknown' because this implementation does
+// not capture a runtime receipt from the executor environment.
+
+const CAPSULE_DECLARED_POLICY: CapsuleIsolationRecord = {
+  declaredPolicy: {
+    networkIsolationDeclared: true,
+    credentialIsolationDeclared: true,
+  },
+  observedEvidence: {
+    executionReceiptPresent: false,
+    networkDisabledObserved: 'unknown',
+    noCredentialsMountedObserved: 'unknown',
+  },
 }
 
 // ── Budget-exhaustion error detection ────────────────────────────────────────
@@ -129,62 +171,56 @@ function isBudgetExhaustionError(err: unknown): boolean {
   )
 }
 
-// ── Terminal outcome derivation from broker result ────────────────────────────
+// ── Agent message composition ─────────────────────────────────────────────────
 //
-// Since project-tool-broker.ts is not modified, these fields are derived from
-// the broker result fields that ARE exposed by ProjectBrokerSessionResult.
+// Composes the agent message with the operator task first (verbatim) and the
+// skill guidance clearly delimited as supplementary and subordinate.
+// Throws AGENT_MESSAGE_COMPOSITION_FAILED if the task is not present in the result.
 
-function deriveFinalizeAttempted(brokerResult: ProjectBrokerSessionResult): boolean {
-  return (brokerResult.customToolCounts[SPRINT4A_TOOL_FINALIZE] ?? 0) > 0
+function composeAgentMessage(operatorTask: string, envelopeText: string): string {
+  const composed = [
+    operatorTask,
+    '',
+    GUIDANCE_SECTION_HEADER,
+    envelopeText,
+    GUIDANCE_SECTION_FOOTER,
+  ].join('\n')
+
+  if (!composed.includes(operatorTask)) {
+    throw new SkillGuidedInvocationError(
+      'AGENT_MESSAGE_COMPOSITION_FAILED',
+      'Composed agent message does not contain the operator task verbatim'
+    )
+  }
+
+  return composed
 }
 
-function deriveFinalizeAccepted(brokerResult: ProjectBrokerSessionResult): boolean {
-  return brokerResult.patchPackage !== null
-}
-
-function deriveProjectWriteOccurred(brokerResult: ProjectBrokerSessionResult): boolean {
-  return (brokerResult.customToolCounts[SPRINT4A_TOOL_WRITE_FILE] ?? 0) > 0
-}
-
-function deriveChecksInvalidatedByWrite(
-  writeOccurred: boolean,
-  finalizeAttempted: boolean,
-  finalizeAccepted: boolean,
-): boolean {
-  // A write always invalidates check evidence. If writes occurred AND finalize was
-  // attempted but rejected (gate 2 fired because checksValidAfterLastWrite was false
-  // OR gate 1 fired because checks were never re-run after the write), checks were
-  // invalidated. If finalize was accepted, writes were healed by subsequent checks.
-  if (!writeOccurred) return false
-  if (finalizeAccepted) return false
-  if (finalizeAttempted) return true
-  // Writes occurred but finalize was never attempted — checks were invalidated
-  // but the agent didn't try to finalize. Conservative: true.
-  return true
-}
+// ── Terminal outcome from broker result ───────────────────────────────────────
+//
+// Blocker 2: all terminal truth flows from broker-authoritative fields.
+// Wrapper never independently re-derives patch eligibility from check history.
 
 function deriveTerminationReason(
   brokerResult: ProjectBrokerSessionResult,
   budgetExhausted: boolean,
 ): LiveRunTerminationReason {
   if (budgetExhausted) return 'FAILED_TOOL_BUDGET_EXHAUSTED'
-  if (brokerResult.patchPackage !== null) return 'COMPLETED'
+  if (brokerResult.finalizeAccepted) return 'COMPLETED'
   return 'FAILED_INCOMPLETE_AGENT_RUN'
 }
 
-function derivePatchEligible(
+function deriveProjectWriteOccurred(brokerResult: ProjectBrokerSessionResult): boolean {
+  return (brokerResult.customToolCounts[SPRINT4A_TOOL_WRITE_FILE] ?? 0) > 0
+}
+
+// checksInvalidatedByWrite is a factual display field, not an eligibility gate.
+// It reflects broker state: write occurred AND checks were not valid after last write.
+function deriveChecksInvalidatedByWrite(
+  writeOccurred: boolean,
   brokerResult: ProjectBrokerSessionResult,
-  sourceUnmodified: boolean,
 ): boolean {
-  if (!sourceUnmodified) return false
-  if (!brokerResult.passed) return false
-  if (brokerResult.patchPackage === null) return false
-  if (brokerResult.builtinToolUseCount !== 0) return false
-  const checksPassed =
-    brokerResult.checkResults !== null &&
-    brokerResult.checkResults.length > 0 &&
-    brokerResult.checkResults.every(r => r.verdict === 'PASS')
-  return checksPassed
+  return writeOccurred && !brokerResult.checksValidAfterLastWrite
 }
 
 // ── Main function ─────────────────────────────────────────────────────────────
@@ -215,13 +251,16 @@ Rules:
  *
  * Mandatory invocation ordering:
  *   Steps 1-7:  Skill validation — all checks for the skill; no side effects.
- *   Step 8:     Append Phase A audit record (appendFileSync before broker call).
+ *   Step 8:     Load contract and build snapshot (post-contract-load, pre-session).
+ *   Step 9:     Append Phase A audit record (appendFileSync before broker call).
+ *               recordPosition: 'post-contract-pre-session' documents the ordering truth.
  *               Phase A failure → SkillGuidedInvocationError('PHASE_A_AUDIT_FAILED')
  *               → no broker session started, no envelope exposed.
- *   Step 9:     Run broker session with agentMessage = rendered envelope text.
+ *   Step 10:    Run broker session with composed agentMessage (task + guidance).
  *               Budget exhaustion throws; other exceptions are caught.
- *   Step 10:    Construct Phase B record from trusted broker state (never from skill text).
- *   Step 11:    Append Phase B audit record (appendFileSync — last gate).
+ *   Step 11:    Construct Phase B record from broker-authoritative state.
+ *               patchEligibleForApplication comes from brokerResult.classification.
+ *   Step 12:    Append Phase B audit record (appendFileSync — last gate).
  *               Phase B failure → return FAILED_INVOCATION_AUDIT_PERSISTENCE.
  *               All results are released only after Phase B succeeds.
  */
@@ -290,12 +329,16 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
     throw new SkillGuidedInvocationError('DISCLAIMER_MISSING', `Skill "${skillRequest.skillId}": rendered envelope does not contain SKILL_AUTHORITY_DISCLAIMER`)
   }
 
-  // Step 7: Compute envelopeHash (SHA-256 of full envelope text)
+  // Step 7: Compute envelopeHash (SHA-256 of guidance envelope text only)
+  // and operatorTaskHash (SHA-256 of immutable operator task text).
+  // These two hashes are recorded independently in Phase A.
   let envelopeHash: string
+  let operatorTaskHash: string
   try {
     envelopeHash = crypto.createHash('sha256').update(envelope.text, 'utf-8').digest('hex')
+    operatorTaskHash = crypto.createHash('sha256').update(TASK_DESCRIPTION, 'utf-8').digest('hex')
   } catch (err) {
-    throw new SkillGuidedInvocationError('ENVELOPE_HASH_FAILED' as never, `Failed to compute envelope hash: ${(err as Error).message}`)
+    throw new SkillGuidedInvocationError('ENVELOPE_HASH_FAILED' as never, `Failed to compute hashes: ${(err as Error).message}`)
   }
 
   const invokedSkillEntry: InvokedSkillEntry = {
@@ -308,12 +351,16 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
     enabledAtInvocation: true,
   }
 
-  // ── Load contract BEFORE Phase A (contract is pre-session, not skill-influenced) ─
+  // ── Step 8: Load contract and build snapshot (pre-session) ─────────────────
+  // These execute before Phase A is written. Phase A records this ordering
+  // explicitly via recordPosition: 'post-contract-pre-session'.
 
   const contract = loadProjectContract(pilotSourcePath)
   const snapshot = buildPilotSnapshot(contract, runDir)
 
-  // ── Step 8: Append Phase A audit record — LAST GATE before broker session ──
+  // ── Step 9: Append Phase A audit record — LAST GATE before broker session ──
+  // recordPosition documents the truthful ordering: contract/snapshot were
+  // loaded before this record was written.
 
   const phaseARecord: SkillInvocationPhaseARecord = {
     phase: SKILL_INVOCATION_PHASE_A,
@@ -325,6 +372,9 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
     runId,
     sanitizedProjectId: contract.projectId,
     operatorSelectedSkills: true,
+    operatorTaskHash,
+    compositionPolicyVersion: TASK_FIRST_COMPOSITION_POLICY_VERSION,
+    recordPosition: 'post-contract-pre-session',
   }
 
   let auditPath: string
@@ -337,11 +387,15 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
     )
   }
 
-  // ── Step 9: Run broker session (skill envelope as agentMessage) ─────────────
+  // ── Step 10: Compose agent message and run broker session ───────────────────
   //
-  // From this point, every exit path MUST attempt Phase B before returning.
-  // The envelope text enters only as agentMessage prompt text — it cannot
-  // influence broker state, finalize guards, capsule isolation, or check commands.
+  // Blocker 1 composition: operator task appears verbatim first; skill guidance
+  // follows as a clearly delimited supplementary section. The guidance cannot
+  // override broker policy, verification requirements, or the operator task.
+  // The envelopeHash (guidance-only) and operatorTaskHash remain independently
+  // auditable — agentMessage SHA-256 ≠ envelopeHash.
+
+  const agentMessage = composeAgentMessage(TASK_DESCRIPTION, envelope.text)
 
   let brokerResult: ProjectBrokerSessionResult | null = null
   let brokerException: Error | null = null
@@ -359,18 +413,21 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
       outputDir: path.join(runDir, 'executor-outputs'),
       patchDir,
       taskDescription: TASK_DESCRIPTION,
-      agentMessage: envelope.text,
+      agentMessage,
     })
   } catch (err) {
     brokerException = err instanceof Error ? err : new Error(String(err))
     budgetExhausted = isBudgetExhaustionError(brokerException)
   }
 
-  // ── Step 10: Derive terminal fields from trusted broker state ───────────────
+  // ── Step 11: Derive Phase B fields from broker-authoritative state ──────────
+  //
+  // Blocker 2: patchEligibleForApplication flows from brokerResult.classification,
+  // which is set by evaluateTerminalRunOutcome inside the broker. The wrapper
+  // must not independently re-derive patch eligibility from check history.
   //
   // CRITICAL: No field in phaseBRecord may be derived from envelope.text or
-  // any other skill-text source. All fields come from broker result counters,
-  // classification data, and post-session file verification.
+  // any other skill-text source.
 
   const sourceVerification = brokerResult
     ? verifySourceUnchanged(snapshot)
@@ -389,15 +446,17 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
   if (brokerResult !== null) {
     sessionId = brokerResult.sessionId
     checkResults = brokerResult.checkResults ?? []
-    finalizeAttempted = deriveFinalizeAttempted(brokerResult)
-    finalizeAccepted = deriveFinalizeAccepted(brokerResult)
+    // Use broker-authoritative values directly — no re-derivation
+    finalizeAttempted = brokerResult.finalizeAttempted
+    finalizeAccepted = brokerResult.finalizeAccepted
     writeOccurred = deriveProjectWriteOccurred(brokerResult)
-    checksInvalidated = deriveChecksInvalidatedByWrite(writeOccurred, finalizeAttempted, finalizeAccepted)
+    checksInvalidated = deriveChecksInvalidatedByWrite(writeOccurred, brokerResult)
     terminationReason = deriveTerminationReason(brokerResult, false)
-    patchEligible = derivePatchEligible(brokerResult, sourceVerification.sourceUnmodified)
+    // Blocker 2: patchEligibleForApplication from broker classification, not re-derived
+    patchEligible = brokerResult.classification.patchEligibleForApplication &&
+      sourceVerification.sourceUnmodified
     phaseBFinalOutcome = finalizeAccepted && brokerResult.passed ? 'COMPLETED' : 'FAILED_INCOMPLETE_AGENT_RUN'
   } else {
-    // Broker threw — session may have started but we have no result
     sessionId = ''
     checkResults = []
     finalizeAttempted = false
@@ -413,10 +472,11 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
       : 'BROKER_SESSION_EXCEPTION'
   }
 
-  // ── Step 11: Append Phase B audit record — LAST GATE before result release ──
+  // ── Step 12: Append Phase B audit record — LAST GATE before result release ──
   //
-  // This is the mandatory single terminal funnel. No clearance, eligibility flag,
-  // or patch reference is returned until this append succeeds.
+  // Blocker 3: capsuleIsolation uses the two-layer model — declaredPolicy reflects
+  // operator configuration; observedEvidence reflects per-run runtime receipts.
+  // No static assertion is written as observed evidence.
 
   const phaseBRecord: SkillInvocationPhaseBRecord = {
     phase: SKILL_INVOCATION_PHASE_B,
@@ -429,7 +489,7 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
     finalizeAccepted,
     terminationReason,
     patchEligibleForApplication: patchEligible,
-    capsuleIsolationIndicators: CAPSULE_ISOLATION,
+    capsuleIsolation: CAPSULE_DECLARED_POLICY,
     sourceTreeUnmodified: sourceVerification.sourceUnmodified,
     finalOutcome: phaseBFinalOutcome,
   }
@@ -443,10 +503,6 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
   }
 
   // ── Single release gate ─────────────────────────────────────────────────────
-  //
-  // If Phase B failed: return failure, discard all broker results (even if broker
-  // finalize was accepted and patch artifacts exist on disk at patchDir).
-  // Staged artifacts are forensic-only; they are not surfaced as eligible.
 
   if (!phaseBPersisted) {
     return {
@@ -457,7 +513,9 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
       runnerType: SKILL_GUIDED_PILOT_RUNNER_TYPE,
       sanitizedProjectId: contract.projectId,
       skillId: skillRequest.skillId,
+      operatorTaskHash,
       envelopeHash,
+      compositionPolicyVersion: TASK_FIRST_COMPOSITION_POLICY_VERSION,
       auditRecordPath: auditPath,
       sessionId: null,
       finalOutcome: 'FAILED_INVOCATION_AUDIT_PERSISTENCE',
@@ -474,8 +532,6 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
     }
   }
 
-  // Phase B succeeded — release result reflecting broker outcome
-
   return {
     invocationId,
     runId,
@@ -484,7 +540,9 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
     runnerType: SKILL_GUIDED_PILOT_RUNNER_TYPE,
     sanitizedProjectId: contract.projectId,
     skillId: skillRequest.skillId,
+    operatorTaskHash,
     envelopeHash,
+    compositionPolicyVersion: TASK_FIRST_COMPOSITION_POLICY_VERSION,
     auditRecordPath: auditPath,
     sessionId: brokerResult?.sessionId ?? null,
     finalOutcome: phaseBFinalOutcome,

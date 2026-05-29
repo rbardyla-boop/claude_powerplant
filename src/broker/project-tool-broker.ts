@@ -48,6 +48,10 @@ export interface ProjectBrokerSessionResult {
   patchPackage: import('../projects/generate-patch-package.js').PatchPackage | null
   passed: boolean
   classification: RunClassification
+  // Authoritative broker terminal truth — wrapper must use these, not re-derive
+  checksValidAfterLastWrite: boolean
+  finalizeAttempted: boolean
+  finalizeAccepted: boolean
 }
 
 interface BrokerState {
@@ -478,5 +482,8 @@ export async function runProjectPilotBrokerSession(opts: {
     patchPackage: state.patchPackage,
     passed: outcome.finalVerificationPassed,
     classification,
+    checksValidAfterLastWrite: state.checksValidAfterLastWrite,
+    finalizeAttempted: state.finalizeAttempted,
+    finalizeAccepted: state.patchPackage !== null,
   }
 }

@@ -68,17 +68,25 @@ export interface SkillInvocationRecord {
 }
 
 // ── Stage 2B: Phase A — pre-session record ────────────────────────────────────
+//
+// recordPosition documents the actual call ordering:
+//   - contract and snapshot are loaded BEFORE this record is written
+//   - this record is written BEFORE the broker session starts
+// This makes the ordering explicit and prevents false "pre-everything" claims.
 
 export interface SkillInvocationPhaseARecord {
   phase: typeof SKILL_INVOCATION_PHASE_A
   invocationId: string
-  invocationTimestamp: string   // ISO 8601 — set before any broker call
+  invocationTimestamp: string          // ISO 8601 — set before any broker call
   syntheticScope: false
   runnerType: typeof SKILL_GUIDED_PILOT_RUNNER_TYPE
   invokedSkills: InvokedSkillEntry[]
   runId: string
-  sanitizedProjectId: string
+  sanitizedProjectId: string           // populated from loaded contract (post-contract-load)
   operatorSelectedSkills: true
+  operatorTaskHash: string             // SHA-256 of the immutable operator task text
+  compositionPolicyVersion: string     // version label for the task+guidance composition rule
+  recordPosition: 'post-contract-pre-session'  // explicit ordering: after contract load, before broker
 }
 
 // ── Stage 2B: Phase B — terminal completion record ───────────────────────────
@@ -96,9 +104,27 @@ export type LiveRunFinalOutcome =
   | 'BROKER_SESSION_EXCEPTION'
   | 'FAILED_INVOCATION_AUDIT_PERSISTENCE'
 
-export interface CapsuleIsolationIndicators {
-  executorNetworkDisabled: true
-  noCredentialsPassedToExecutor: true
+// Operator-declared isolation controls — what policy states, not per-run observation.
+// These represent configuration intent and must never be written as observed evidence.
+export interface CapsuleIsolationDeclaredPolicy {
+  networkIsolationDeclared: boolean
+  credentialIsolationDeclared: boolean
+}
+
+// Per-run observed execution evidence — only what was actually confirmed this execution.
+// Fields default to 'unknown' when no runtime receipt is present; they are never
+// auto-populated from static policy declarations.
+export interface CapsuleIsolationObservedEvidence {
+  executionReceiptPresent: boolean
+  networkDisabledObserved: 'yes' | 'no' | 'unknown'
+  noCredentialsMountedObserved: 'yes' | 'no' | 'unknown'
+}
+
+// Combined isolation record — always structurally separates policy from observation.
+// Consumers must not conflate declaredPolicy with observedEvidence.
+export interface CapsuleIsolationRecord {
+  declaredPolicy: CapsuleIsolationDeclaredPolicy
+  observedEvidence: CapsuleIsolationObservedEvidence
 }
 
 export interface SkillInvocationPhaseBRecord {
@@ -111,8 +137,8 @@ export interface SkillInvocationPhaseBRecord {
   finalizeAttempted: boolean
   finalizeAccepted: boolean
   terminationReason: LiveRunTerminationReason
-  patchEligibleForApplication: boolean
-  capsuleIsolationIndicators: CapsuleIsolationIndicators
+  patchEligibleForApplication: boolean  // must come from broker, not wrapper re-derivation
+  capsuleIsolation: CapsuleIsolationRecord  // always distinguishes policy from observed fact
   sourceTreeUnmodified: boolean
   finalOutcome: LiveRunFinalOutcome
 }
