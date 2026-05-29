@@ -203,8 +203,11 @@ export async function cmdRun(
     patchDiff = fs.readFileSync(patchDiffPath, 'utf-8')
   }
 
+  const checksPassed = brokerResult.checkResults !== null &&
+    brokerResult.checkResults.every(r => r.verdict === 'PASS')
+
   const passed =
-    (brokerResult.verification?.passed ?? false) &&
+    checksPassed &&
     sourceVerification.sourceUnmodified &&
     brokerResult.builtinToolUseCount === 0
 
@@ -212,7 +215,7 @@ export async function cmdRun(
     runId,
     task,
     passed,
-    testsPassed: brokerResult.verification?.passed ?? false,
+    testsPassed: checksPassed,
     customToolCounts: brokerResult.customToolCounts,
     builtInToolUseCount: brokerResult.builtinToolUseCount,
     patchFiles: brokerResult.patchPackage?.patchFiles ?? [],

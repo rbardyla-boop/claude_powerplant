@@ -5,6 +5,7 @@ export const CheckVerdictSchema = z.enum([
   'FAIL_CHECK',
   'BLOCKED_MISSING_TOOLING',
   'FAIL_BOUNDARY',
+  'FAIL_VERIFICATION_INTEGRITY',
 ])
 export type CheckVerdict = z.infer<typeof CheckVerdictSchema>
 
@@ -24,6 +25,7 @@ export const OverallVerdictSchema = z.enum([
   'FAIL_CHECK',
   'BLOCKED_MISSING_TOOLING',
   'FAIL_BOUNDARY',
+  'FAIL_VERIFICATION_INTEGRITY',
 ])
 export type OverallVerdict = z.infer<typeof OverallVerdictSchema>
 

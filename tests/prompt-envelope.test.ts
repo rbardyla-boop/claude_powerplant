@@ -7,7 +7,7 @@ import { buildPilotSnapshot } from '../src/projects/build-pilot-snapshot.js'
 import { verifySourceUnchanged } from '../src/projects/verify-source-unchanged.js'
 import { generatePatchPackage } from '../src/projects/generate-patch-package.js'
 import { printReviewReport } from '../src/cli/terminal-output.js'
-import type { PilotVerification } from '../src/contracts/project-tool-contracts.js'
+import type { CheckResult } from '../src/contracts/verification-preflight-report.js'
 import type { LoadedProjectContract } from '../src/projects/load-project-contract.js'
 import { loadProjectContract } from '../src/projects/load-project-contract.js'
 import { PROMPT_ENVELOPE_PROTOCOL_VERSION } from '../src/config/constants.js'
@@ -26,12 +26,16 @@ const MODEL_ID = 'claude-haiku-4-5-20251001'
 
 let pilotContract: LoadedProjectContract
 
-const mockVerification: PilotVerification = {
-  checkId: 'test',
-  fixedAction: 'node --test',
-  exitCode: 0,
-  passed: true,
-}
+const mockCheckResults: CheckResult[] = [
+  {
+    checkId: 'test',
+    command: 'npx vitest run',
+    verdict: 'PASS',
+    exitCode: 0,
+    stdoutTail: '# tests 25\n# pass 25',
+    stderrTail: '',
+  },
+]
 
 let tempDir: string
 let patchDir: string
@@ -50,7 +54,7 @@ beforeAll(async () => {
     snapshot,
     contract: pilotContract,
     sourceVerification,
-    verification: mockVerification,
+    checkResults: mockCheckResults,
     customToolCounts: { project_run_check: 1, project_finalize: 1 },
     finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
     patchDir,

@@ -12,6 +12,14 @@ const TOOLING_MISSING_PATTERNS: RegExp[] = [
   /npm ERR! missing script/i,
 ]
 
+// Patterns that indicate zero tests were discovered in a test run.
+// These indicate a misconfigured test runner, not an actual passing suite.
+const ZERO_TESTS_PATTERNS: RegExp[] = [
+  /^# tests 0\b/m,
+  /\bNo test files found\b/i,
+  /\b0 tests\b.*$/m,
+]
+
 const SAFE_OUTPUT_TAIL_BYTES = 2048
 
 export function tailOutput(raw: string): string {
@@ -19,15 +27,32 @@ export function tailOutput(raw: string): string {
   return '…' + raw.slice(raw.length - SAFE_OUTPUT_TAIL_BYTES)
 }
 
+/**
+ * Inspect the stdout/stderr of a test runner and verify that at least one
+ * test was discovered. Returns FAIL_VERIFICATION_INTEGRITY when a zero-test
+ * condition is detected — an exit code of 0 with no tests executed is a
+ * false-green result that must not be accepted as PASS.
+ */
+export function classifyTestCheckIntegrity(
+  stdout: string,
+): 'PASS' | 'FAIL_VERIFICATION_INTEGRITY' {
+  for (const pattern of ZERO_TESTS_PATTERNS) {
+    if (pattern.test(stdout)) return 'FAIL_VERIFICATION_INTEGRITY'
+  }
+  return 'PASS'
+}
+
 export interface CheckClassificationInput {
   spawnError: Error | null
   exitCode: number | null
   stdout: string
   stderr: string
+  /** When 'test', applies the zero-tests integrity guard on top of exit-code classification. */
+  checkKind?: 'test' | 'typecheck'
 }
 
 export function classifyCheckResult(input: CheckClassificationInput): CheckVerdict {
-  const { spawnError, exitCode, stdout, stderr } = input
+  const { spawnError, exitCode, stdout, stderr, checkKind } = input
 
   // The executor binary itself (npm, node, etc.) was not found on PATH.
   if (spawnError !== null) {
@@ -48,7 +73,14 @@ export function classifyCheckResult(input: CheckClassificationInput): CheckVerdi
   // No exit code and no spawn error: timeout or unexpected termination.
   if (exitCode === null) return 'FAIL_BOUNDARY'
 
-  if (exitCode === 0) return 'PASS'
+  if (exitCode === 0) {
+    // For test checks, verify at least one test was discovered.
+    // An exit 0 with 0 tests is a false-green result.
+    if (checkKind === 'test') {
+      return classifyTestCheckIntegrity(stdout)
+    }
+    return 'PASS'
+  }
 
   return 'FAIL_CHECK'
 }

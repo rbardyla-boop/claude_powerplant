@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "00000000-0000-0000-0000-000000000001",
+  "name": "minimal-skill",
+  "version": 1,
+  "description": "A minimal test skill with no scripts or tests.",
+  "tags": [],
+  "createdAt": "2026-05-28T00:00:00.000Z",
+  "promotedAt": null,
+  "sourceRunId": null,
+  "sha256": null,
+  "evaluationPassed": false,
+  "evaluationAt": null
+}

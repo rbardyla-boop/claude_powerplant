@@ -6,7 +6,7 @@ import { buildPilotSnapshot } from '../src/projects/build-pilot-snapshot.js'
 import { verifySourceUnchanged } from '../src/projects/verify-source-unchanged.js'
 import { generatePatchPackage } from '../src/projects/generate-patch-package.js'
 import { loadProjectContract } from '../src/projects/load-project-contract.js'
-import type { PilotVerification } from '../src/contracts/project-tool-contracts.js'
+import type { CheckResult } from '../src/contracts/verification-preflight-report.js'
 import type { LoadedProjectContract } from '../src/projects/load-project-contract.js'
 
 const PILOT_SOURCE = '/home/thebackhand/Downloads/grok/powerplant_pilot_status'
@@ -23,12 +23,16 @@ afterAll(() => {
   fs.rmSync(tempDir, { recursive: true, force: true })
 })
 
-const mockVerification: PilotVerification = {
-  checkId: 'test',
-  fixedAction: 'node --test',
-  exitCode: 0,
-  passed: true,
-}
+const mockCheckResults: CheckResult[] = [
+  {
+    checkId: 'test',
+    command: 'npx vitest run',
+    verdict: 'PASS',
+    exitCode: 0,
+    stdoutTail: '# tests 25\n# pass 25',
+    stderrTail: '',
+  },
+]
 
 describe('patch-package', () => {
   it('generates package with required files', async () => {
@@ -43,7 +47,7 @@ describe('patch-package', () => {
       snapshot,
       contract: pilotContract,
       sourceVerification,
-      verification: mockVerification,
+      checkResults: mockCheckResults,
       customToolCounts: { project_read_file: 2, project_write_file: 2, project_run_check: 1, project_finalize: 1 },
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,
@@ -79,7 +83,7 @@ describe('patch-package', () => {
       snapshot,
       contract: pilotContract,
       sourceVerification,
-      verification: mockVerification,
+      checkResults: mockCheckResults,
       customToolCounts: {},
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,
@@ -107,7 +111,7 @@ describe('patch-package', () => {
       snapshot,
       contract: pilotContract,
       sourceVerification,
-      verification: mockVerification,
+      checkResults: mockCheckResults,
       customToolCounts: {},
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,
@@ -145,7 +149,7 @@ export function summarizeChecks(results) {
       snapshot,
       contract: pilotContract,
       sourceVerification,
-      verification: mockVerification,
+      checkResults: mockCheckResults,
       customToolCounts: {},
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,
@@ -184,7 +188,7 @@ export function summarizeChecks(results) {
       snapshot,
       contract: pilotContract,
       sourceVerification,
-      verification: mockVerification,
+      checkResults: mockCheckResults,
       customToolCounts: {},
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,
@@ -217,7 +221,7 @@ export function summarizeChecks(results) {
       snapshot,
       contract: pilotContract,
       sourceVerification,
-      verification: mockVerification, // passed: true
+      checkResults: mockCheckResults, // passed: true
       customToolCounts: {},
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,
@@ -240,14 +244,23 @@ export function summarizeChecks(results) {
 
     const snapshot = buildPilotSnapshot(pilotContract, runDir)
     const sourceVerification = verifySourceUnchanged(snapshot)
-    const failedVerification: PilotVerification = { ...mockVerification, passed: false, exitCode: 1 }
+    const failedCheckResults: CheckResult[] = [
+      {
+        checkId: 'test',
+        command: 'npx vitest run',
+        verdict: 'FAIL_CHECK',
+        exitCode: 1,
+        stdoutTail: '# tests 25\n# fail 25',
+        stderrTail: '',
+      },
+    ]
 
     await generatePatchPackage({
       runId: 'test-run-7',
       snapshot,
       contract: pilotContract,
       sourceVerification,
-      verification: failedVerification,
+      checkResults: failedCheckResults,
       customToolCounts: {},
       finalResponse: 'SANITIZED PILOT PATCH COMPLETE',
       patchDir,

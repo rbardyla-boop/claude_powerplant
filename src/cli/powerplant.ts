@@ -7,6 +7,7 @@ import { cmdReview } from './commands/review.js'
 import { cmdVerify } from './commands/verify.js'
 import { cmdDoctor } from './commands/doctor.js'
 import { cmdSetup } from './commands/setup.js'
+import { cmdSkill } from './commands/skill.js'
 import { loadPowerplantEnv } from '../config/powerplant-home.js'
 
 // Resolve the Powerplant package root from this file's location so that
@@ -27,6 +28,7 @@ function printUsage(): void {
   console.log('  powerplant doctor  [project-path]')
   console.log('  powerplant run [--yes] <project-path> "<task>"')
   console.log('  powerplant review <run-id>')
+  console.log('  powerplant skill <subcommand>')
   console.log()
   console.log('Commands:')
   console.log('  setup    Provision or migrate runtime resources; --repair validates via live API')
@@ -35,6 +37,7 @@ function printUsage(): void {
   console.log('  doctor   Show runtime status and configuration (no API call)')
   console.log('  run      Run a task on a sanitized copy and produce a patch')
   console.log('  review   Display artifacts from a completed run')
+  console.log('  skill    Manage the Skill Reactor vault (import, test, promote, rollback)')
 }
 
 const [, , command, ...rest] = process.argv
@@ -105,6 +108,11 @@ switch (command) {
       process.exit(1)
     }
     await cmdReview(runId)
+    break
+  }
+
+  case 'skill': {
+    await cmdSkill(rest)
     break
   }
 

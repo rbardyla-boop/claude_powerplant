@@ -35,6 +35,16 @@ function splitCommand(command: string): [string, string[]] {
 }
 
 /**
+ * Infer the kind of check from the check ID and command string.
+ * Used to select the appropriate integrity guard in classifyCheckResult.
+ */
+function inferCheckKind(checkId: string, command: string): 'test' | 'typecheck' | undefined {
+  if (checkId === 'test' || /\bvitest\b|\bjest\b/.test(command)) return 'test'
+  if (checkId === 'typecheck' || /\btsc\b/.test(command)) return 'typecheck'
+  return undefined
+}
+
+/**
  * Run each approved check inside the isolated verification workspace.
  *
  * No API calls, no Managed Agents session, no original project mounted.
@@ -63,7 +73,8 @@ export function runApprovedChecks(
     const exitCode = result.status
     const spawnError = result.error ?? null
 
-    const verdict = classifyCheckResult({ spawnError, exitCode, stdout, stderr })
+    const checkKind = inferCheckKind(checkId, command)
+    const verdict = classifyCheckResult({ spawnError, exitCode, stdout, stderr, checkKind })
 
     const entry: CheckResult = {
       checkId,

@@ -177,3 +177,33 @@ export const SPRINT4A_TEST_OUTPUT_FILENAME = 'TEST_OUTPUT.txt' as const
 
 // Clearance invariants
 export const SPRINT4A_CLEARED_FOR_GENERATED_PILOT = true as const
+
+// Skill Invocation Audit — Stage 2A
+export const SKILL_INVOCATION_AUDIT_FILENAME = 'skill-invocation-audit.jsonl' as const
+
+// Skill Lifecycle — Stage 2B: Sanitized Project Invocation
+export const SKILL_GUIDED_PILOT_RUNNER_TYPE = 'live-sanitized-pilot' as const
+export const SKILL_INVOCATION_PHASE_A = 'phase-a-pre-session' as const
+export const SKILL_INVOCATION_PHASE_B = 'phase-b-completion' as const
+
+// Stage 2B Preflight Gates (P0-A / P0-B / P0-C)
+export const STAGE2B_PREFLIGHT_BASE = '/tmp/powerplant-stage2b-preflight' as const
+export const STAGE2B_ORACLE_TASK_SPEC_VERSION = 'summarizeChecks-v1' as const
+export const STAGE2B_PREFLIGHT_EVALUATOR_PROFILE_ID = 'subprocess-node-v1' as const
+export const STAGE2B_PREFLIGHT_CONTROL_POLICY_VERSION = 'stage2b-preflight-v1' as const
+export const STAGE2B_TOOL_POLICY_VERSION = 'stage2b-tool-policy-v1' as const
+
+// Stage 2B Preflight — capsule-v1 evaluator profile
+// Image identity is content-pinned: the evaluator verifies the actual image ID against
+// CAPSULE_V1_EXPECTED_IMAGE_ID before any candidate code runs. If the tag is reused with
+// a different image, execution is refused. See docker/capsule-v1/build-manifest.json.
+export const STAGE2B_CAPSULE_EVALUATOR_PROFILE_ID = 'capsule-v1' as const
+export const CAPSULE_DOCKER_IMAGE = 'powerplant-evaluator:node-test-js-v1' as const
+export const CAPSULE_V1_EXPECTED_IMAGE_ID = 'sha256:f496aac93ff3459a5142f2e37aedb025c414f5a7244e299160ae82a3aa29ad48' as const
+export const CAPSULE_ORACLE_MOUNT_TARGET = '/oracle' as const
+export const CAPSULE_WORKSPACE_MOUNT_TARGET = '/workspace' as const
+export const CAPSULE_OUTPUT_MOUNT_TARGET = '/output' as const
+export const CAPSULE_MAX_OUTPUT_BYTES_DEFAULT = 65536 as const   // 64 KB
+export const CAPSULE_TIMEOUT_MS_DEFAULT = 10000 as const         // 10s (includes container start)
+export const CAPSULE_PIDS_LIMIT = 64 as const
+export const ORACLE_TRUSTED_RESULT_PREFIX = 'ORACLE_TRUSTED_RESULT:' as const

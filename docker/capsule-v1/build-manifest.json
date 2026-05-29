@@ -1,0 +1,31 @@
+{
+  "profile": "capsule-v1",
+  "imageTag": "powerplant-evaluator:node-test-js-v1",
+  "imageId": "sha256:f496aac93ff3459a5142f2e37aedb025c414f5a7244e299160ae82a3aa29ad48",
+  "baseImage": "node:20-bookworm",
+  "user": "ppeval",
+  "workdir": "/workspace",
+  "portabilityNote": "imageId is content-pinned to the locally built image. This image has no RepoDigests (not pushed to a remote registry). To reproduce: docker build -t powerplant-evaluator:node-test-js-v1 docker/capsule-v1/ and verify the resulting image ID matches. If the ID differs, update CAPSULE_V1_EXPECTED_IMAGE_ID in src/config/constants.ts and re-run the P0-E suite.",
+  "securityProfile": {
+    "network": "none",
+    "rootfs": "read-only",
+    "capabilities": "drop-ALL",
+    "privileges": "no-new-privileges",
+    "pidsLimit": 64,
+    "memoryLimit": "256m",
+    "stopSignal": "SIGKILL",
+    "dockerSocketMounted": false,
+    "privilegedMode": false,
+    "hostPidNamespace": false,
+    "hostNetworkNamespace": false
+  },
+  "mounts": {
+    "oracle": { "target": "/oracle", "mode": "read-only" },
+    "workspace": { "target": "/workspace", "mode": "read-only" },
+    "output": { "target": "/output", "mode": "writable-isolated" },
+    "tmp": { "type": "tmpfs", "target": "/tmp", "options": "exec,nosuid,size=64m" }
+  },
+  "trustedResultChannel": "stdout-sentinel",
+  "resultSentinelPrefix": "ORACLE_TRUSTED_RESULT:",
+  "resultChannelNote": "Oracle writes result to stdout using function references saved before candidate import. File in /output is advisory only. Parent uses stdout sentinel for PASS/FAIL determination."
+}

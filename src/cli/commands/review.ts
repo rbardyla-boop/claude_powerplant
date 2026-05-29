@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { findRunDirectory } from '../../runs/find-run.js'
 import { printReviewReport } from '../terminal-output.js'
+import type { RunClassification } from '../../contracts/project-tool-contracts.js'
 
 const REQUIRED_ARTIFACTS = [
   'SOURCE_MANIFEST.json',
@@ -71,6 +72,28 @@ export async function cmdReview(runId: string): Promise<void> {
     }
   }
 
+  let runClassification: RunClassification | undefined
+  const classificationPath = path.join(artifactDir, 'RUN_CLASSIFICATION.json')
+  if (fs.existsSync(classificationPath)) {
+    try { runClassification = JSON.parse(fs.readFileSync(classificationPath, 'utf-8')) as RunClassification } catch { /* fallback */ }
+  }
+  if (!runClassification) {
+    const failPath = path.join(artifactDir, 'FAILURE_CLASSIFICATION.md')
+    if (fs.existsSync(failPath)) {
+      const md = fs.readFileSync(failPath, 'utf-8')
+      const sM = md.match(/runStatus:\s*(\S+)/)
+      const eM = md.match(/patchEligibleForApplication:\s*(\S+)/)
+      if (sM || eM) {
+        runClassification = {
+          terminationReason: (sM?.[1] ?? 'FAILED_INCOMPLETE_AGENT_RUN') as RunClassification['terminationReason'],
+          patchEligibleForApplication: eM?.[1] === 'true',
+          readCount: 0, writeCount: 0, checkCount: 0,
+          finalizeAttempted: false, artifactsComplete: false, repeatedCheckFailures: false,
+        }
+      }
+    }
+  }
+
   printReviewReport({
     runId,
     artifactDir,
@@ -81,5 +104,6 @@ export async function cmdReview(runId: string): Promise<void> {
     adversarialMd,
     sessionSummary,
     promptEnvelope,
+    runClassification,
   })
 }
