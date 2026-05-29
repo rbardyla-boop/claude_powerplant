@@ -1,0 +1,8 @@
+{
+  "name": "powerplant-local",
+  "version": "1.0.0",
+  "description": "Project-local Claude Code skills for Claude Powerplant",
+  "skills": [
+    "./skills/"
+  ]
+}
