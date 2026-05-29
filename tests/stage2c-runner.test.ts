@@ -1,6 +1,6 @@
-// Stage 2C Step 1 — Skeleton runner tests (no Anthropic API, no live session)
+// Stage 2C — Runner tests (no Anthropic API, no live session)
 //
-// Proves fail-closed behavior and honest receipt discipline for:
+// Step 1 proves fail-closed behavior and honest receipt discipline for:
 //   - Dry-run receipt emission
 //   - Agent execution not attempted (agentExecutionAttempted === false)
 //   - Builtin tool count is zero (builtinToolUseCount === 0)
@@ -8,6 +8,13 @@
 //   - Real repo manifest captured or honestly null
 //   - Invalid/missing task fails closed (RUNNER_BLOCKED)
 //   - Static boundary: no @anthropic-ai/sdk import, no promoteSkill call
+//
+// Step 2 proves fake-agent adapter discipline:
+//   - Deterministic workspace mutation recorded
+//   - Typed tool event emitted
+//   - Boundary enforcement blocks outside-workspace writes
+//   - Real repo manifest immutability preserved
+//   - Dry-run bypass: fakeAgent + dryRun still returns SKELETON_NO_AGENT_EXECUTION
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
@@ -20,6 +27,8 @@ const { _runStage2cSkeletonForTesting } =
 import type {
   Stage2cRunnerInternalOpts,
   Stage2cSkeletonReceipt,
+  Stage2cFakeAgentReceipt,
+  FakeAgentToolEvent,
 } from '../scripts/stage2c-runner.js'
 
 // ── Test state ────────────────────────────────────────────────────────────────
@@ -196,13 +205,13 @@ describe('run directory and workspace', () => {
 describe('repo manifest capture', () => {
   it('captures a non-null hash when the repo path has files', () => {
     fs.writeFileSync(path.join(tmpRepo, 'example.ts'), 'export const x = 1\n')
-    const r = _runStage2cSkeletonForTesting(baseOpts()).receipt!
+    const r = _runStage2cSkeletonForTesting(baseOpts()).receipt as Stage2cSkeletonReceipt
     expect(r.repoManifestHash).not.toBeNull()
     expect(typeof r.repoManifestHash).toBe('string')
   })
 
   it('returns EMPTY hash when the repo dir is empty', () => {
-    const r = _runStage2cSkeletonForTesting(baseOpts()).receipt!
+    const r = _runStage2cSkeletonForTesting(baseOpts()).receipt as Stage2cSkeletonReceipt
     expect(r.repoManifestHash).toBe('EMPTY')
   })
 
@@ -212,19 +221,236 @@ describe('repo manifest capture', () => {
     // so repoManifestHash is 'EMPTY' (not null) — still honest, not fabricated
     const r = _runStage2cSkeletonForTesting(
       baseOpts({ _repoPathForTesting: nonExistentRepo }),
-    ).receipt!
+    ).receipt as Stage2cSkeletonReceipt
     // 'EMPTY' or null are both honest; neither is a fabricated hash
     expect(r.repoManifestHash === null || r.repoManifestHash === 'EMPTY').toBe(true)
   })
 
   it('does not fabricate a hash value', () => {
-    const r = _runStage2cSkeletonForTesting(baseOpts()).receipt!
+    const r = _runStage2cSkeletonForTesting(baseOpts()).receipt as Stage2cSkeletonReceipt
     // any non-null value must look like a real SHA-256 hex or the sentinel 'EMPTY'
     if (r.repoManifestHash !== null) {
       const isValidSha256 = /^[a-f0-9]{64}$/.test(r.repoManifestHash)
       const isEmpty = r.repoManifestHash === 'EMPTY'
       expect(isValidSha256 || isEmpty).toBe(true)
     }
+  })
+})
+
+// ── Step 2 helper ─────────────────────────────────────────────────────────────
+
+function fakeAgentOpts(overrides: Partial<Stage2cRunnerInternalOpts> = {}): Stage2cRunnerInternalOpts {
+  return {
+    task: VALID_TASK,
+    dryRun: false,
+    fakeAgent: true,
+    _runtimeBaseForTesting: tmpBase,
+    _repoPathForTesting: tmpRepo,
+    _gitInfoForTesting: FAKE_GIT,
+    ...overrides,
+  }
+}
+
+// ── Step 2: fake-agent receipt shape ─────────────────────────────────────────
+
+describe('fake-agent receipt shape', () => {
+  it('emits FAKE_AGENT_WORKSPACE_MUTATION_RECORDED with all required fields', () => {
+    const result = _runStage2cSkeletonForTesting(fakeAgentOpts())
+    expect(result.outcome).toBe('FAKE_AGENT_WORKSPACE_MUTATION_RECORDED')
+    expect(result.blockerReason).toBe('')
+    const r = result.receipt as Stage2cFakeAgentReceipt
+    expect(r).not.toBeNull()
+    expect(r.schemaVersion).toBe(1)
+    expect(r.stage).toBe('stage2c')
+    expect(r.step).toBe(2)
+    expect(r.task).toBe(VALID_TASK)
+    expect(r.dryRun).toBe(false)
+    expect(r.terminalOutcome).toBe('FAKE_AGENT_WORKSPACE_MUTATION_RECORDED')
+  })
+
+  it('agentExecutionAttempted is true', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(r.agentExecutionAttempted).toBe(true)
+  })
+
+  it('builtinToolUseCount is zero', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(r.builtinToolUseCount).toBe(0)
+  })
+
+  it('managedAgentTransport is deterministic_fake_agent', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(r.managedAgentTransport).toBe('deterministic_fake_agent')
+  })
+
+  it('task is trimmed in receipt', () => {
+    const r = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ task: '  fix the bug  ' }),
+    ).receipt as Stage2cFakeAgentReceipt
+    expect(r.task).toBe('fix the bug')
+  })
+
+  it('writes the receipt JSON to the run directory', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    const receiptFile = path.join(r.runDir, 'stage2c-receipt.json')
+    expect(fs.existsSync(receiptFile)).toBe(true)
+    const persisted = JSON.parse(fs.readFileSync(receiptFile, 'utf-8')) as Stage2cFakeAgentReceipt
+    expect(persisted.runId).toBe(r.runId)
+    expect(persisted.terminalOutcome).toBe('FAKE_AGENT_WORKSPACE_MUTATION_RECORDED')
+  })
+})
+
+// ── Step 2: tool events ───────────────────────────────────────────────────────
+
+describe('fake-agent tool events', () => {
+  it('records at least one structured tool event', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(r.toolEvents.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('tool event has correct shape', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    const ev = r.toolEvents[0] as FakeAgentToolEvent
+    expect(ev.tool).toBe('WRITE_FILE')
+    expect(typeof ev.targetPath).toBe('string')
+    expect(ev.targetPath.length).toBeGreaterThan(0)
+    expect(typeof ev.allowed).toBe('boolean')
+    expect(typeof ev.bytesWritten).toBe('number')
+    expect(typeof ev.timestamp).toBe('string')
+  })
+
+  it('tool event allowed is true for workspace write', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(r.toolEvents[0]!.allowed).toBe(true)
+  })
+
+  it('tool event bytesWritten is positive', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(r.toolEvents[0]!.bytesWritten).toBeGreaterThan(0)
+  })
+
+  it('tool event timestamp is parseable ISO 8601', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(isNaN(new Date(r.toolEvents[0]!.timestamp).getTime())).toBe(false)
+  })
+})
+
+// ── Step 2: workspace mutation ────────────────────────────────────────────────
+
+describe('fake-agent workspace mutation', () => {
+  it('writes STAGE2C_FAKE_AGENT_OUTPUT.md inside workspace', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    const outputFile = path.join(r.workspacePath, 'STAGE2C_FAKE_AGENT_OUTPUT.md')
+    expect(fs.existsSync(outputFile)).toBe(true)
+  })
+
+  it('file content includes task text', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    const content = fs.readFileSync(path.join(r.workspacePath, 'STAGE2C_FAKE_AGENT_OUTPUT.md'), 'utf-8')
+    expect(content).toContain(VALID_TASK)
+  })
+
+  it('file content includes fake-agent marker', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    const content = fs.readFileSync(path.join(r.workspacePath, 'STAGE2C_FAKE_AGENT_OUTPUT.md'), 'utf-8')
+    expect(content).toContain('DETERMINISTIC_FAKE_AGENT_EXECUTION')
+  })
+
+  it('workspaceManifestHashBefore is EMPTY (workspace was empty before agent ran)', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(r.workspaceManifestHashBefore).toBe('EMPTY')
+  })
+
+  it('workspaceManifestHashAfter is a real SHA-256 hex', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(/^[a-f0-9]{64}$/.test(r.workspaceManifestHashAfter)).toBe(true)
+  })
+
+  it('before and after workspace hashes differ (mutation was recorded)', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(r.workspaceManifestHashBefore).not.toBe(r.workspaceManifestHashAfter)
+  })
+})
+
+// ── Step 2: real repo immutability ───────────────────────────────────────────
+
+describe('fake-agent real repo immutability', () => {
+  it('repo manifest is immutable or unavailable (never fabricated)', () => {
+    fs.writeFileSync(path.join(tmpRepo, 'example.ts'), 'export const x = 1\n')
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(r.repoManifestImmutable === true || r.repoManifestImmutable === 'unavailable').toBe(true)
+  })
+
+  it('repoManifestImmutable is true when repo path has files', () => {
+    fs.writeFileSync(path.join(tmpRepo, 'example.ts'), 'export const x = 1\n')
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(r.repoManifestImmutable).toBe(true)
+  })
+
+  it('repoManifestHashBefore equals repoManifestHashAfter when repo is unmodified', () => {
+    fs.writeFileSync(path.join(tmpRepo, 'example.ts'), 'export const x = 1\n')
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(r.repoManifestHashBefore).toBe(r.repoManifestHashAfter)
+  })
+})
+
+// ── Step 2: boundary enforcement ─────────────────────────────────────────────
+
+describe('fake-agent boundary enforcement', () => {
+  it('blocks outside-workspace write and returns RUNNER_BLOCKED', () => {
+    const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
+    const result = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
+    )
+    expect(result.outcome).toBe('RUNNER_BLOCKED')
+    expect(result.receipt).toBeNull()
+    expect(result.blockerReason).toContain('outside workspace')
+    expect(fs.existsSync(outsidePath)).toBe(false)
+  })
+
+  it('blocks path-traversal write (../.. escape)', () => {
+    const traversalPath = path.join(tmpBase, '..', 'traversal-escape.txt')
+    const result = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: traversalPath }),
+    )
+    expect(result.outcome).toBe('RUNNER_BLOCKED')
+    expect(result.receipt).toBeNull()
+  })
+})
+
+// ── Step 2: dry-run bypass ────────────────────────────────────────────────────
+
+describe('fake-agent dry-run bypass', () => {
+  it('fakeAgent + dryRun still emits SKELETON_NO_AGENT_EXECUTION', () => {
+    const result = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ dryRun: true }),
+    )
+    expect(result.outcome).toBe('SKELETON_NO_AGENT_EXECUTION')
+    const r = result.receipt as Stage2cSkeletonReceipt
+    expect(r.agentExecutionAttempted).toBe(false)
+    expect(r.managedAgentTransport).toBe('not_wired')
+    expect(r.terminalOutcome).toBe('SKELETON_NO_AGENT_EXECUTION')
+  })
+
+  it('fakeAgent + dryRun does not write STAGE2C_FAKE_AGENT_OUTPUT.md', () => {
+    const result = _runStage2cSkeletonForTesting(fakeAgentOpts({ dryRun: true }))
+    const r = result.receipt as Stage2cSkeletonReceipt
+    const outputFile = path.join(r.workspacePath, 'STAGE2C_FAKE_AGENT_OUTPUT.md')
+    expect(fs.existsSync(outputFile)).toBe(false)
+  })
+})
+
+// ── Step 2: task validation (fail-closed with fakeAgent) ──────────────────────
+
+describe('fake-agent task validation', () => {
+  it.each([
+    ['empty string', ''],
+    ['whitespace only', '   '],
+  ])('blocks on %s even with fakeAgent: true', (_label, task) => {
+    const result = _runStage2cSkeletonForTesting(fakeAgentOpts({ task }))
+    expect(result.outcome).toBe('RUNNER_BLOCKED')
+    expect(result.blockerReason).toContain('non-empty')
+    expect(result.receipt).toBeNull()
   })
 })
 
