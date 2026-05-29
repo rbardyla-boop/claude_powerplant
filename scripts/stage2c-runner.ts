@@ -3,6 +3,8 @@
 // Authorization: Step 1 — Initialization and Evidence Spine Only (skeleton)
 //               Step 2 — Deterministic Fake-Agent Adapter (fakeAgent mode)
 //               Step 3 — Denied Tool Evidence Receipts and Boundary Hardening
+//               Step 4 — Symlink-Safe Canonical Write-Boundary Enforcement
+//               Step 5 — Oracle/Capsule Evaluator Attachment (subprocess-node-v1)
 //   No real agent is invoked. No Anthropic API transport is wired.
 //
 // FORBIDDEN by this authorization:
@@ -18,6 +20,8 @@ import path from 'path'
 import { execSync } from 'child_process'
 import { STAGE2C_RUNTIME_BASE } from '../src/config/constants.js'
 import { computeDirectoryManifestHash } from '../src/projects/compute-repo-manifest.js'
+import { createOracleBundle } from '../src/preflight/oracle-bundle.js'
+import { runOracleWithFixture } from '../src/preflight/oracle-evaluator.js'
 
 // ── Fake-Agent Tool Event (Step 2/3) ─────────────────────────────────────────
 
@@ -28,6 +32,14 @@ export interface FakeAgentToolEvent {
   denialReason?: string   // present only when allowed === false
   bytesWritten: number
   timestamp: string
+}
+
+// ── Oracle Evaluation Result (Step 5) ────────────────────────────────────────
+
+export interface OracleEvaluationResult {
+  status: 'PASS' | 'FAIL' | 'ERROR' | 'TIMEOUT' | 'OUTPUT_CAPPED' | 'IMPORT_ERROR'
+  exitCode: number | null
+  summary: string | null
 }
 
 // ── Step 1 Receipt ────────────────────────────────────────────────────────────
@@ -101,18 +113,50 @@ export interface Stage2cFakeAgentDeniedReceipt {
   terminalOutcome: 'FAKE_AGENT_TOOL_DENIED_OUTSIDE_WORKSPACE'
 }
 
+// ── Step 5 Receipt — fake-agent + oracle evaluation ───────────────────────────
+
+export interface Stage2cFakeAgentOracleReceipt {
+  schemaVersion: 1
+  stage: 'stage2c'
+  step: 5
+  runId: string
+  timestamp: string
+  gitBranch: string | null
+  gitCommitSha: string | null
+  task: string
+  dryRun: false
+  runDir: string
+  workspacePath: string
+  agentExecutionAttempted: true
+  managedAgentTransport: 'deterministic_fake_agent'
+  builtinToolUseCount: 0
+  toolEvents: FakeAgentToolEvent[]
+  workspaceManifestHashBefore: string
+  workspaceManifestHashAfter: string
+  repoManifestHashBefore: string | null
+  repoManifestHashAfter: string | null
+  repoManifestImmutable: boolean | 'unavailable'
+  oracleEvaluationAttempted: true
+  oracleEvaluator: 'subprocess-node-v1'
+  oracleTarget: 'sanitized_candidate_workspace'
+  oracleResult: OracleEvaluationResult
+  terminalOutcome: 'FAKE_AGENT_ORACLE_EVALUATED'
+}
+
 // ── Result ────────────────────────────────────────────────────────────────────
 
 export type Stage2cRunnerOutcome =
   | 'SKELETON_NO_AGENT_EXECUTION'
   | 'FAKE_AGENT_WORKSPACE_MUTATION_RECORDED'
   | 'FAKE_AGENT_TOOL_DENIED_OUTSIDE_WORKSPACE'
+  | 'FAKE_AGENT_ORACLE_EVALUATED'
+  | 'FAKE_AGENT_ORACLE_FAILED'
   | 'RUNNER_BLOCKED'
 
 export interface Stage2cRunnerResult {
   outcome: Stage2cRunnerOutcome
   blockerReason: string
-  receipt: Stage2cSkeletonReceipt | Stage2cFakeAgentReceipt | Stage2cFakeAgentDeniedReceipt | null
+  receipt: Stage2cSkeletonReceipt | Stage2cFakeAgentReceipt | Stage2cFakeAgentDeniedReceipt | Stage2cFakeAgentOracleReceipt | null
 }
 
 // ── Public interface ──────────────────────────────────────────────────────────
@@ -121,6 +165,7 @@ export interface Stage2cRunnerOpts {
   task: string
   dryRun: boolean
   fakeAgent?: boolean
+  oracle?: boolean
 }
 
 // ── Internal interface — injectable seams for deterministic testing only ──────
@@ -130,6 +175,7 @@ export interface Stage2cRunnerInternalOpts extends Stage2cRunnerOpts {
   _repoPathForTesting?: string
   _gitInfoForTesting?: { branch: string | null; commitSha: string | null }
   _fakeAgentTargetPathForTesting?: string
+  _oracleEvaluatorForTesting?: (workspacePath: string) => OracleEvaluationResult
 }
 
 // ── Fake-agent workspace boundary check (Step 3 + Step 4) ────────────────────
@@ -277,6 +323,70 @@ function executeFakeAgent(params: {
   return {
     event: { tool: 'WRITE_FILE', targetPath, allowed: true, bytesWritten: encoded.length, timestamp },
     blocked: false,
+  }
+}
+
+// ── Step 5: oracle evaluation against the sanitized candidate workspace ───────
+//
+// Reads fixture content from the workspace (src/status.js if present, falling
+// back to STAGE2C_FAKE_AGENT_OUTPUT.md), then runs the immutable subprocess
+// oracle against it.  Errors are captured honestly — never fabricated as PASS.
+//
+// The _oracleEvaluatorForTesting seam replaces the real oracle call for unit
+// tests, without exposing the seam on the public Stage2cRunnerOpts interface.
+
+function evaluateWorkspaceOracle(
+  workspacePath: string,
+  runId: string,
+  seam?: (workspacePath: string) => OracleEvaluationResult,
+): OracleEvaluationResult {
+  if (seam !== undefined) {
+    try {
+      return seam(workspacePath)
+    } catch (err) {
+      return {
+        status: 'ERROR',
+        exitCode: null,
+        summary: (err instanceof Error ? err.message : String(err)).slice(0, 256),
+      }
+    }
+  }
+
+  try {
+    // Prefer src/status.js (canonical oracle target); fall back to the file the
+    // fake agent actually wrote.  Content is passed as fixtureContent to the
+    // subprocess evaluator, which places it at workspace/src/status.js inside
+    // a fresh isolated temp directory — the fake-agent workspace is not mutated.
+    const statusJsPath = path.join(workspacePath, 'src', 'status.js')
+    const mdPath = path.join(workspacePath, 'STAGE2C_FAKE_AGENT_OUTPUT.md')
+    let fixtureContent: string
+    if (fs.existsSync(statusJsPath)) {
+      fixtureContent = fs.readFileSync(statusJsPath, 'utf-8')
+    } else if (fs.existsSync(mdPath)) {
+      fixtureContent = fs.readFileSync(mdPath, 'utf-8')
+    } else {
+      fixtureContent = ''
+    }
+
+    const bundleResult = createOracleBundle({ preflightId: runId })
+    const evalReceipt = runOracleWithFixture({
+      bundleResult,
+      fixtureContent,
+      fixtureLabel: 'stage2c-fake-agent-workspace',
+      preflightId: runId,
+    })
+
+    return {
+      status: evalReceipt.terminalOracleStatus,
+      exitCode: null,
+      summary: evalReceipt.boundedDiagnostics.slice(0, 256) || null,
+    }
+  } catch (err) {
+    return {
+      status: 'ERROR',
+      exitCode: null,
+      summary: (err instanceof Error ? err.message : String(err)).slice(0, 256),
+    }
   }
 }
 
@@ -429,6 +539,59 @@ function _runStage2cSkeletonInternal(opts: Stage2cRunnerInternalOpts): Stage2cRu
     // ── Allowed path: workspace write succeeded ───────────────────────────────
     let workspaceManifestHashAfter: string
     try { workspaceManifestHashAfter = computeDirectoryManifestHash(workspacePath) } catch { workspaceManifestHashAfter = 'EMPTY' }
+
+    // ── Step 5: oracle evaluation branch ─────────────────────────────────────
+    if (opts.oracle) {
+      const oracleResult = evaluateWorkspaceOracle(workspacePath, runId, opts._oracleEvaluatorForTesting)
+
+      const oracleReceipt: Stage2cFakeAgentOracleReceipt = {
+        schemaVersion: 1,
+        stage: 'stage2c',
+        step: 5,
+        runId,
+        timestamp,
+        gitBranch: gitInfo.branch,
+        gitCommitSha: gitInfo.commitSha,
+        task: task.trim(),
+        dryRun: false,
+        runDir,
+        workspacePath,
+        agentExecutionAttempted: true,
+        managedAgentTransport: 'deterministic_fake_agent',
+        builtinToolUseCount: 0,
+        toolEvents: [event],
+        workspaceManifestHashBefore,
+        workspaceManifestHashAfter,
+        repoManifestHashBefore,
+        repoManifestHashAfter,
+        repoManifestImmutable,
+        oracleEvaluationAttempted: true,
+        oracleEvaluator: 'subprocess-node-v1',
+        oracleTarget: 'sanitized_candidate_workspace',
+        oracleResult,
+        terminalOutcome: 'FAKE_AGENT_ORACLE_EVALUATED',
+      }
+
+      try {
+        fs.writeFileSync(
+          path.join(runDir, 'stage2c-receipt.json'),
+          JSON.stringify(oracleReceipt, null, 2) + '\n',
+          'utf-8',
+        )
+      } catch (err) {
+        return {
+          outcome: 'RUNNER_BLOCKED',
+          blockerReason: `Failed to write oracle receipt: ${err instanceof Error ? err.message : String(err)}`,
+          receipt: null,
+        }
+      }
+
+      return {
+        outcome: 'FAKE_AGENT_ORACLE_EVALUATED',
+        blockerReason: '',
+        receipt: oracleReceipt,
+      }
+    }
 
     const fakeAgentReceipt: Stage2cFakeAgentReceipt = {
       schemaVersion: 1,

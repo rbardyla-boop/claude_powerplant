@@ -45,6 +45,8 @@ import type {
   Stage2cSkeletonReceipt,
   Stage2cFakeAgentReceipt,
   Stage2cFakeAgentDeniedReceipt,
+  Stage2cFakeAgentOracleReceipt,
+  OracleEvaluationResult,
   FakeAgentToolEvent,
 } from '../scripts/stage2c-runner.js'
 
@@ -103,6 +105,7 @@ describe('stage2c-runner static invariants', () => {
     expect(match![0]).not.toContain('_runtimeBaseForTesting')
     expect(match![0]).not.toContain('_repoPathForTesting')
     expect(match![0]).not.toContain('_gitInfoForTesting')
+    expect(match![0]).not.toContain('_oracleEvaluatorForTesting')
   })
 })
 
@@ -781,5 +784,190 @@ describe('stage2c-run.ts static invariants', () => {
   it('does not import @anthropic-ai/sdk', () => {
     const src = nonCommentLines('src/cli/stage2c-run.ts')
     expect(src).not.toContain('@anthropic-ai/sdk')
+  })
+})
+
+// ── Step 5: oracle evaluation helpers ────────────────────────────────────────
+
+const PASS_ORACLE: OracleEvaluationResult = { status: 'PASS', exitCode: null, summary: 'oracle passed' }
+const FAIL_ORACLE: OracleEvaluationResult = { status: 'FAIL', exitCode: null, summary: 'oracle failed' }
+const ERROR_ORACLE: OracleEvaluationResult = { status: 'ERROR', exitCode: null, summary: 'oracle error' }
+
+function oracleOpts(
+  oracleResult: OracleEvaluationResult = PASS_ORACLE,
+  overrides: Partial<Stage2cRunnerInternalOpts> = {},
+): Stage2cRunnerInternalOpts {
+  return {
+    task: VALID_TASK,
+    dryRun: false,
+    fakeAgent: true,
+    oracle: true,
+    _runtimeBaseForTesting: tmpBase,
+    _repoPathForTesting: tmpRepo,
+    _gitInfoForTesting: FAKE_GIT,
+    _oracleEvaluatorForTesting: () => oracleResult,
+    ...overrides,
+  }
+}
+
+// ── Step 5: oracle receipt shape ──────────────────────────────────────────────
+
+describe('fake-agent oracle receipt shape', () => {
+  it('emits FAKE_AGENT_ORACLE_EVALUATED outcome', () => {
+    const result = _runStage2cSkeletonForTesting(oracleOpts())
+    expect(result.outcome).toBe('FAKE_AGENT_ORACLE_EVALUATED')
+    expect(result.blockerReason).toBe('')
+  })
+
+  it('oracle receipt has correct schema fields', () => {
+    const r = _runStage2cSkeletonForTesting(oracleOpts()).receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.schemaVersion).toBe(1)
+    expect(r.stage).toBe('stage2c')
+    expect(r.step).toBe(5)
+    expect(r.dryRun).toBe(false)
+    expect(r.managedAgentTransport).toBe('deterministic_fake_agent')
+    expect(r.terminalOutcome).toBe('FAKE_AGENT_ORACLE_EVALUATED')
+  })
+
+  it('oracle receipt records oracleEvaluationAttempted: true', () => {
+    const r = _runStage2cSkeletonForTesting(oracleOpts()).receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.oracleEvaluationAttempted).toBe(true)
+  })
+
+  it('oracle receipt records oracle evaluator identity', () => {
+    const r = _runStage2cSkeletonForTesting(oracleOpts()).receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.oracleEvaluator).toBe('subprocess-node-v1')
+    expect(r.oracleTarget).toBe('sanitized_candidate_workspace')
+  })
+
+  it('oracle receipt records oracleResult from evaluator without fabrication', () => {
+    const r = _runStage2cSkeletonForTesting(oracleOpts(FAIL_ORACLE)).receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.oracleResult.status).toBe('FAIL')
+    expect(r.oracleResult.summary).toBe('oracle failed')
+    expect(r.oracleResult.exitCode).toBeNull()
+  })
+
+  it('oracle receipt is written to the run directory', () => {
+    const r = _runStage2cSkeletonForTesting(oracleOpts()).receipt as Stage2cFakeAgentOracleReceipt
+    const receiptFile = path.join(r.runDir, 'stage2c-receipt.json')
+    expect(fs.existsSync(receiptFile)).toBe(true)
+    const persisted = JSON.parse(fs.readFileSync(receiptFile, 'utf-8'))
+    expect(persisted.terminalOutcome).toBe('FAKE_AGENT_ORACLE_EVALUATED')
+    expect(persisted.oracleEvaluationAttempted).toBe(true)
+  })
+})
+
+// ── Step 5: oracle receipt preserves fake-agent evidence ─────────────────────
+
+describe('fake-agent oracle receipt — fake-agent evidence preserved', () => {
+  it('toolEvents are preserved in oracle receipt', () => {
+    const r = _runStage2cSkeletonForTesting(oracleOpts()).receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.toolEvents.length).toBeGreaterThanOrEqual(1)
+    expect(r.toolEvents[0]!.tool).toBe('WRITE_FILE')
+    expect(r.toolEvents[0]!.allowed).toBe(true)
+  })
+
+  it('agentExecutionAttempted is true in oracle receipt', () => {
+    const r = _runStage2cSkeletonForTesting(oracleOpts()).receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.agentExecutionAttempted).toBe(true)
+  })
+
+  it('builtinToolUseCount is zero in oracle receipt', () => {
+    const r = _runStage2cSkeletonForTesting(oracleOpts()).receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.builtinToolUseCount).toBe(0)
+  })
+
+  it('workspace manifest hashes are captured in oracle receipt', () => {
+    const r = _runStage2cSkeletonForTesting(oracleOpts()).receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.workspaceManifestHashBefore).toBe('EMPTY')
+    expect(/^[a-f0-9]{64}$/.test(r.workspaceManifestHashAfter)).toBe(true)
+    expect(r.workspaceManifestHashBefore).not.toBe(r.workspaceManifestHashAfter)
+  })
+})
+
+// ── Step 5: oracle result honesty ─────────────────────────────────────────────
+
+describe('fake-agent oracle result honesty', () => {
+  it('PASS result is recorded as PASS, not modified', () => {
+    const r = _runStage2cSkeletonForTesting(oracleOpts(PASS_ORACLE)).receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.oracleResult.status).toBe('PASS')
+  })
+
+  it('FAIL result is recorded as FAIL, not promoted to PASS', () => {
+    const r = _runStage2cSkeletonForTesting(oracleOpts(FAIL_ORACLE)).receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.oracleResult.status).toBe('FAIL')
+    expect(r.terminalOutcome).toBe('FAKE_AGENT_ORACLE_EVALUATED')  // harness still ran
+  })
+
+  it('ERROR result is captured honestly, not fabricated as PASS', () => {
+    const result = _runStage2cSkeletonForTesting(oracleOpts(ERROR_ORACLE))
+    const r = result.receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.oracleResult.status).toBe('ERROR')
+    expect(r.oracleResult.status).not.toBe('PASS')
+    expect(result.outcome).toBe('FAKE_AGENT_ORACLE_EVALUATED')
+  })
+
+  it('oracle seam exception is captured as ERROR, harness does not throw', () => {
+    const result = _runStage2cSkeletonForTesting(
+      oracleOpts(PASS_ORACLE, {
+        _oracleEvaluatorForTesting: () => { throw new Error('seam threw deliberately') },
+      }),
+    )
+    expect(result.outcome).toBe('FAKE_AGENT_ORACLE_EVALUATED')
+    const r = result.receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.oracleResult.status).toBe('ERROR')
+    expect(r.oracleResult.summary).toContain('seam threw deliberately')
+  })
+})
+
+// ── Step 5: oracle suppression in non-oracle paths ───────────────────────────
+
+describe('oracle suppression in non-oracle paths', () => {
+  it('denied fake-agent write does not run oracle', () => {
+    const outsidePath = path.join(os.tmpdir(), `evil-oracle-${Date.now()}.txt`)
+    let oracleCalled = false
+    const result = _runStage2cSkeletonForTesting(
+      oracleOpts(PASS_ORACLE, {
+        _fakeAgentTargetPathForTesting: outsidePath,
+        _oracleEvaluatorForTesting: () => { oracleCalled = true; return PASS_ORACLE },
+      }),
+    )
+    expect(result.outcome).toBe('FAKE_AGENT_TOOL_DENIED_OUTSIDE_WORKSPACE')
+    expect(oracleCalled).toBe(false)
+  })
+
+  it('dry-run does not run oracle even when oracle flag is set', () => {
+    let oracleCalled = false
+    const result = _runStage2cSkeletonForTesting(
+      oracleOpts(PASS_ORACLE, {
+        dryRun: true,
+        _oracleEvaluatorForTesting: () => { oracleCalled = true; return PASS_ORACLE },
+      }),
+    )
+    expect(result.outcome).toBe('SKELETON_NO_AGENT_EXECUTION')
+    expect(oracleCalled).toBe(false)
+  })
+
+  it('fake-agent without oracle still emits FAKE_AGENT_WORKSPACE_MUTATION_RECORDED', () => {
+    const result = _runStage2cSkeletonForTesting(fakeAgentOpts())
+    expect(result.outcome).toBe('FAKE_AGENT_WORKSPACE_MUTATION_RECORDED')
+    const r = result.receipt as Stage2cFakeAgentReceipt
+    expect((r as unknown as Record<string, unknown>)['oracleEvaluationAttempted']).toBeUndefined()
+  })
+})
+
+// ── Step 5: real repo immutability across oracle evaluation ───────────────────
+
+describe('real repo immutability — oracle path', () => {
+  it('repoManifestImmutable is true when repo has files and oracle ran', () => {
+    fs.writeFileSync(path.join(tmpRepo, 'example.ts'), 'export const x = 1\n')
+    const r = _runStage2cSkeletonForTesting(oracleOpts()).receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.repoManifestImmutable).toBe(true)
+  })
+
+  it('repoManifestHashBefore equals repoManifestHashAfter when oracle ran', () => {
+    fs.writeFileSync(path.join(tmpRepo, 'example.ts'), 'export const x = 1\n')
+    const r = _runStage2cSkeletonForTesting(oracleOpts()).receipt as Stage2cFakeAgentOracleReceipt
+    expect(r.repoManifestHashBefore).toBe(r.repoManifestHashAfter)
   })
 })
