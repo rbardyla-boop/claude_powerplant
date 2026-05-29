@@ -1190,14 +1190,69 @@ candidate execution when `getActualCapsuleImageId()` returned `null`.
 
 5. **Release Ledger Gate 6B2C** updated from PARTIALLY BLOCKED to CLOSED.
 
-**Accepted claim:** The capsule evaluator image is now CI-reproducible from a
-digest-pinned Dockerfile. The P0-C/P0-E controls (network isolation, filesystem
-isolation, timeout, output cap, env scrubbing, readonly rootfs, image identity
-verification) are verified against the new baseline. The Stage 2B L1 accepted verdict
-and trusted-directory limitation are unchanged.
-
-**Validation:** 1042/1042 tests passing; typecheck clean. No new credentials, runtime
+**Local validation:** 1042/1042 tests passing; typecheck clean. No new credentials, runtime
 identifiers, or operator-local paths introduced.
 
-**Next authorized action:** Push the capsule repair commit stack; verify hosted CI passes;
-open final PR from `feat/stage2b-preflight` into `master`.
+**Status at commit `da7297e`:** Pushed to `feat/stage2b-preflight`. Hosted CI verification
+pending. See post-push failure analysis below.
+
+---
+
+## Gate 6B2C — Hosted CI Failure Post-Mortem and Registry Digest Migration (2026-05-29)
+
+**Triggered by:** GitHub Actions run on commit `da7297e` (push to `feat/stage2b-preflight`).
+
+**Failed step:** `Build and verify capsule evaluator image` — the first custom CI step.
+P0-C/P0-E tests were **not reached**.
+
+**Observed identity mismatch:**
+
+```
+Expected (locally recorded image .Id):
+  sha256:e76106374cf197074f855721173fd0c0b77265ec2c7a5372a9f39fa9b48ef0bc
+
+Actual (GitHub-hosted build image .Id):
+  sha256:f56124cd65299a19c56f1905b2847aec9ad6896fe5331aa932994deb88d3d5a6
+```
+
+**Root cause:** `docker image inspect --format '{{.Id}}'` returns the SHA-256 of the
+image config JSON. The config JSON embeds a build timestamp. Two independent `docker build`
+runs — even from byte-identical inputs with a digest-pinned base — produce different image
+IDs because the timestamp differs between builders. The base digest pin (`sha256:8f693eaa...`)
+resolved correctly; it is not the source of the divergence. The final image ID is not a
+portable cross-builder identity anchor.
+
+**Consequence:** The "rebuild-and-compare local image ID" CI trust-root design cannot pass
+reliably across independent runners. `CAPSULE_V1_EXPECTED_IMAGE_ID` must not be updated
+opportunistically to match whichever CI runner last built the image.
+
+**Required repair:** Migrate capsule trust root from a local-build image `.Id` to an
+immutable published registry digest on GitHub Container Registry (GHCR). The approved
+capsule image must be built once under review, pushed to GHCR, and its immutable digest
+recorded in the repository. CI must pull that exact digest rather than rebuilding.
+
+> Gate 6B2C remains open. The capsule base image is digest-pinned, but hosted CI
+> demonstrated that local Docker image IDs are not reproducible across independent
+> builders. Capsule trust-root migration to a canonical published registry digest is
+> required before hosted capsule proof can pass.
+
+**Phase A actions (this commit):**
+- Documentation corrected to reflect the actual hosted CI result.
+- Manual publication workflow added at `.github/workflows/publish-capsule-v1.yml` to
+  allow the repository owner to build and push the reviewed capsule image to GHCR and
+  capture its immutable registry digest.
+
+**Phase B actions (pending owner publication and authorization):**
+- Publish capsule image via `publish-capsule-v1.yml`; record the immutable GHCR digest.
+- Replace `CAPSULE_V1_EXPECTED_IMAGE_ID` with `CAPSULE_V1_EXPECTED_REPO_DIGEST` in
+  `src/config/constants.ts`.
+- Update `capsule-evaluator.ts` to verify the resolved registry digest instead of the
+  local image `.Id`.
+- Update `ci.yml` to pull the approved image by digest instead of rebuilding.
+- Update P0-E tests to assert registry-digest semantics.
+- Re-run full test suite; push; verify hosted CI green.
+- Gate 6B2C closes only after hosted P0-C/P0-E validation passes.
+
+**Next authorized action:** Repository owner runs `.github/workflows/publish-capsule-v1.yml`
+on `feat/stage2b-preflight` via `workflow_dispatch`; records the output canonical
+reference; authorizes Phase B implementation.

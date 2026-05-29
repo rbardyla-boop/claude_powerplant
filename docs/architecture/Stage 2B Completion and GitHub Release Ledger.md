@@ -307,42 +307,62 @@ Remaining actions required before formal release:
   historical runtime metadata exposure (live session IDs, agent IDs, environment IDs,
   operator-local paths in commits prior to Gate 6B1).
 
-#### Gate 6B2C — CI Capsule Provisioning Repair and Actions Upgrade — **CLOSED**
+#### Gate 6B2C — CI Capsule Provisioning Repair and Actions Upgrade — **OPEN**
 
-**CI failure root cause:** First hosted GitHub Actions run failed because no step built the
-capsule evaluator image before `npm test`. The evaluator correctly refused candidate execution
-when the pinned image was absent. A clean local rebuild with `--no-cache` produced
-`sha256:cc4ae15d...` — different from the then-pinned `sha256:f496aac9...` — because
-`node:20-bookworm` is a mutable tag that had moved since the original baseline was established.
+**Status:** Base-image digest pinned; local proof re-run passed; hosted CI failed.
+Capsule trust-root migration to a canonical GHCR registry digest is required.
 
-**Capsule trust-root case: Case B → repaired to CI-reproducible.**
+**Original CI failure root cause (pre-`da7297e`):** First hosted GitHub Actions run failed
+because no step built the capsule evaluator image before `npm test`. The evaluator correctly
+refused candidate execution when the pinned image was absent. A clean local rebuild with
+`--no-cache` produced `sha256:cc4ae15d...` — different from the then-pinned
+`sha256:f496aac9...` — because `node:20-bookworm` is a mutable tag that had moved.
 
-**Actions taken:**
+**Actions taken in commit `da7297e`:**
 
 * **Dockerfile base pinned by immutable digest**: `docker/capsule-v1/Dockerfile` now uses
   `FROM node:20-bookworm@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5`.
-  Future builds on this exact digest reproduce the same layers deterministically.
-* **New capsule image identity baseline established**:
+* **New local image identity baseline established**:
   - Base digest: `sha256:8f693eaa7e...` (`node:20-bookworm` as of 2026-05-29)
-  - New image ID: `sha256:e76106374cf197074f855721173fd0c0b77265ec2c7a5372a9f39fa9b48ef0bc`
-  - `CAPSULE_V1_EXPECTED_IMAGE_ID` in `src/config/constants.ts` updated to the new ID.
-  - `docker/capsule-v1/build-manifest.json` updated with new `imageId`, `baseImage`,
-    `baseImageDigest`, and updated `portabilityNote`.
-* **Full P0-C/P0-E proof re-run against the new baseline**: 55/55 capsule tests pass;
-  all F1–F16 controls verified. Results:
-  - P0-C: 14/14 tests pass (F1–F12 + receipt structure + terminal result)
-  - P0-C oracle execution: 9/9 tests pass
-  - P0-E: 32/32 tests pass (F1–F16 extended suite)
-  Full suite: 1042/1042 passing; typecheck clean.
-* **CI workflow updated**: new `Build and verify capsule evaluator image` step added
-  before `npm test`. Builds the image, inspects the actual ID, reads the expected ID
-  from `docker/capsule-v1/build-manifest.json`, and fails immediately on mismatch. This
-  ensures CI and local environments use the same identity-verified evaluator.
+  - Local image ID: `sha256:e76106374cf197074f855721173fd0c0b77265ec2c7a5372a9f39fa9b48ef0bc`
+  - `CAPSULE_V1_EXPECTED_IMAGE_ID` updated in `src/config/constants.ts`.
+  - `docker/capsule-v1/build-manifest.json` updated.
+* **Full P0-C/P0-E proof re-run locally**: 1042/1042 passing; typecheck clean.
+* **CI workflow updated**: `Build and verify capsule evaluator image` step added.
 * **Actions upgrade applied**: `actions/checkout@v4` → `@v6`, `actions/setup-node@v4` → `@v6`.
-  Addresses GitHub Node.js 20 action-runtime deprecation warnings.
 * **No P0-C/P0-E tests skipped or weakened.**
 
-**Next authorized action**: one reviewed forward push; then verify the hosted CI run passes.
+**Second CI failure (commit `da7297e`, 2026-05-29):**
+
+Hosted GitHub Actions run failed at `Build and verify capsule evaluator image`:
+
+```
+CAPSULE_IMAGE_IDENTITY_MISMATCH:
+  expected sha256:e76106374cf197074f855721173fd0c0b77265ec2c7a5372a9f39fa9b48ef0bc
+  got     sha256:f56124cd65299a19c56f1905b2847aec9ad6896fe5331aa932994deb88d3d5a6
+```
+
+**Root cause:** `docker image inspect --format '{{.Id}}'` returns the SHA-256 of the image
+config JSON, which embeds the build timestamp. Independent builds produce different image
+IDs even with identical inputs and a digest-pinned base. The local image `.Id` is not a
+portable cross-builder trust anchor.
+
+> Gate 6B2C remains open. The capsule base image is digest-pinned, but hosted CI
+> demonstrated that local Docker image IDs are not reproducible across independent
+> builders. Capsule trust-root migration to a canonical published registry digest is
+> required before hosted capsule proof can pass.
+
+**Required repair:** Publish the reviewed capsule image to GHCR once; record its immutable
+registry digest; have CI pull that exact digest for all subsequent runs. Manual publication
+workflow available at `.github/workflows/publish-capsule-v1.yml`.
+
+**Gate 6B2C closes only after:** The repository owner publishes the capsule image to GHCR,
+the immutable registry digest is committed to the repository, digest-based verification
+replaces local image `.Id` comparison in `capsule-evaluator.ts` and `ci.yml`, and hosted
+P0-C/P0-E tests pass against the GHCR-sourced artifact.
+
+**Next authorized action**: Repository owner runs `publish-capsule-v1.yml` via
+`workflow_dispatch`; records the canonical reference; authorizes Phase B implementation.
 
 ## Public Claim Boundary
 
