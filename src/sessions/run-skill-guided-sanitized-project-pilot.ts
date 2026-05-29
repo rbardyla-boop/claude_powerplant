@@ -132,6 +132,8 @@ export interface SkillGuidedRunReport {
     patchDir: string
     patchFiles: string[]
   } | null
+  /** Built-in tool use count from the broker session — surfaced for L1 harness evidence. */
+  builtinToolUseCount?: number
 }
 
 // ── Composition constants ─────────────────────────────────────────────────────
@@ -574,6 +576,7 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
       checksInvalidatedByWrite: false,
       checkResults: [],
       patch: null,
+      builtinToolUseCount: brokerResult?.builtinToolUseCount ?? 0,
     }
   }
 
@@ -603,5 +606,6 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
     patch: brokerResult?.patchPackage
       ? { patchDir: brokerResult.patchPackage.patchDir, patchFiles: brokerResult.patchPackage.patchFiles }
       : null,
+    builtinToolUseCount: brokerResult?.builtinToolUseCount ?? 0,
   }
 }

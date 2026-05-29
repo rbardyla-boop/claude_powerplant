@@ -8,10 +8,13 @@
 // before calling the lifecycle API. Per §4.2 of the Stage 2B live acceptance plan,
 // a fixture file missing either label is rejected without ingestion.
 
-import { readFileSync } from 'fs'
+import { readFileSync, mkdirSync, writeFileSync } from 'fs'
+import os from 'os'
 import path from 'path'
 import { ingestSkillPackage } from '../src/skills/skill-ingestion.js'
 import { validateSkill, promoteSkill } from '../src/skills/skill-lifecycle.js'
+
+export const L0_FIXTURE_RECEIPT_FILENAME = 'l0-fixture-receipt.json'
 
 const REQUIRED_LABEL_1 = '<!-- ISOLATED_ACCEPTANCE_GUIDANCE_FIXTURE -->'
 const REQUIRED_LABEL_2 = '<!-- ACCEPTANCE_STATE_ONLY_NOT_PRODUCTION_PROMOTION_EVIDENCE -->'
@@ -54,6 +57,24 @@ async function bootstrapAcceptanceSkill(fixtureDir: string): Promise<void> {
   }
 
   console.log(`ACCEPTANCE_FIXTURE_INSTALLED skillId=${promoted.name} hash=${promoted.contentHash}`)
+
+  // Write the immutable L0 fixture receipt — the canonical source of truth for
+  // fixtureAContentHash in the production L1 CLI. Written once after promotion;
+  // never rewritten by normal Powerplant operations.
+  const ppHome = process.env['POWERPLANT_HOME'] ?? path.join(os.homedir(), '.powerplant')
+  const receiptPath = path.join(ppHome, 'state', L0_FIXTURE_RECEIPT_FILENAME)
+  mkdirSync(path.dirname(receiptPath), { recursive: true })
+  writeFileSync(
+    receiptPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      fixtureSkillId: promoted.name,
+      contentHash: promoted.contentHash,
+      installedAt: new Date().toISOString(),
+    }, null, 2) + '\n',
+    'utf-8',
+  )
+  console.log(`L0_FIXTURE_RECEIPT_WRITTEN ${receiptPath}`)
 }
 
 const fixtureDir = process.argv[2]
