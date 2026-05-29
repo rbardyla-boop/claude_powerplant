@@ -33,3 +33,6 @@ sandbox/output/
 
 # Runtime acceptance artifacts (operator-local; never publish)
 .powerplant/acceptance/
+
+# Sprint 1B live probe output (always runtime output; sanitized copies are tracked instead)
+data/sprint1b-*.json
