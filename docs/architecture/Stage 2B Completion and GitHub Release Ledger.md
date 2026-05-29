@@ -307,11 +307,30 @@ Remaining actions required before formal release:
   historical runtime metadata exposure (live session IDs, agent IDs, environment IDs,
   operator-local paths in commits prior to Gate 6B1).
 
-#### Gate 6B2C — CI Capsule Provisioning Repair and Actions Upgrade — **PHASE B IMPLEMENTED — HOSTED CI PENDING**
+#### Gate 6B2C — CI Capsule Provisioning Repair and Actions Upgrade — **CLOSED — registry-digest capsule trust root verified in hosted CI**
 
-**Status:** Phase B implemented locally. Capsule trust root migrated to the approved
-immutable GHCR registry digest. Ordinary CI now pulls the exact digest for proof execution.
-Hosted CI confirmation remains pending until the branch is pushed and the workflow passes.
+**Status:** CLOSED — registry-digest capsule trust root verified in hosted CI.
+
+**Canonical GHCR reference:**
+`ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e`
+
+**Hosted CI receipt:**
+- Run: `26663770658` — conclusion: `success`
+- Triggering commit: `28e942f` (`docs(release): record capsule registry-digest migration pending hosted proof`)
+- Branch: `feat/stage2b-preflight`
+- Step verified: "Pull approved capsule image by immutable registry digest" — success
+
+**Why local Docker `.Id` was retired:** `docker image inspect --format '{{.Id}}'` returns the
+SHA-256 of the image config JSON, which embeds the build timestamp. Independent builds produce
+different image IDs even with identical inputs and a digest-pinned base — demonstrated by the
+second hosted CI failure at commit `da7297e`. The local image `.Id` is not a portable
+cross-builder trust anchor. The approved canonical GHCR registry digest is immutable and
+identical across all builders.
+
+**Current state:** Ordinary CI now authenticates to GHCR and pulls the approved capsule
+artifact by immutable registry digest before running tests. P0-C and P0-E validate the pulled
+artifact. The release-candidate branch `feat/stage2b-preflight` is ready for the final PR
+into `master`.
 
 **Original CI failure root cause (pre-`da7297e`):** First hosted GitHub Actions run failed
 because no step built the capsule evaluator image before `npm test`. The evaluator correctly
@@ -371,10 +390,15 @@ workflow available at `.github/workflows/publish-capsule-v1.yml`.
 - Local validation: 1042/1042 tests passing; typecheck clean; P0-C/P0-E pass against
   GHCR artifact.
 
-**Gate 6B2C closes only after:** Hosted P0-C/P0-E tests pass against the GHCR-sourced
-artifact in a pushed GitHub Actions run.
+**Accepted claim:**
 
-**Next authorized action**: Push `feat/stage2b-preflight`; confirm hosted CI green.
+> Gate 6B2C closed after migration from non-portable local Docker image-ID verification to an
+> approved immutable GHCR registry-digest capsule trust root. Hosted GitHub Actions CI pulled
+> and verified the canonical capsule artifact and passed the complete test/typecheck workflow
+> on `feat/stage2b-preflight`.
+
+**Next authorized action:** Final PR from `feat/stage2b-preflight` into `master`.
+Merge only after PR checks pass. No release tag to be created as part of the PR.
 
 ## Public Claim Boundary
 

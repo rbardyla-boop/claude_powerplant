@@ -1307,3 +1307,35 @@ P0-C passes against the approved GHCR artifact.
 
 **Next authorized action:** Push `feat/stage2b-preflight`; confirm hosted CI green.
 Gate 6B2C closes only after hosted P0-C/P0-E tests pass against the GHCR-sourced artifact.
+
+---
+
+## Gate 6B2C Closeout — Hosted CI Confirmed (2026-05-29)
+
+**Branch:** `feat/stage2b-preflight`
+**Ending commit:** `28e942f` (`docs(release): record capsule registry-digest migration pending hosted proof`)
+
+**Objective:** Close Gate 6B2C after hosted GitHub Actions CI pulled and verified the
+approved immutable GHCR registry digest and passed the complete test/typecheck workflow.
+
+**Approved canonical GHCR reference:**
+```
+ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e
+```
+
+**Hosted CI receipt:**
+- Run: `26663770658` — conclusion: `success`
+- Triggering commit: `28e942f`
+- Workflow: CI
+- Step verified: "Pull approved capsule image by immutable registry digest" — success
+- "Test and typecheck" job: success
+
+**Accepted claim:**
+
+> Gate 6B2C closed after migration from non-portable local Docker image-ID verification
+> to an approved immutable GHCR registry-digest capsule trust root. Hosted GitHub Actions
+> CI pulled and verified the canonical capsule artifact and passed the complete
+> test/typecheck workflow on `feat/stage2b-preflight`.
+
+**Next authorized action:** Final PR from `feat/stage2b-preflight` into `master`.
+Merge only after PR checks pass. No release tag to be created as part of the PR.
