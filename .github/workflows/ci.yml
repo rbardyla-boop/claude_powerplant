@@ -11,6 +11,10 @@ on:
       - master
       - main
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   test:
     name: Test and typecheck
@@ -32,16 +36,26 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
-      - name: Build and verify capsule evaluator image
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull approved capsule image by immutable registry digest
         run: |
-          docker build -t powerplant-evaluator:node-test-js-v1 docker/capsule-v1/
-          ACTUAL_ID=$(docker image inspect powerplant-evaluator:node-test-js-v1 --format '{{.Id}}')
-          EXPECTED_ID=$(node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('docker/capsule-v1/build-manifest.json','utf8')); process.stdout.write(m.imageId)")
-          if [ "$ACTUAL_ID" != "$EXPECTED_ID" ]; then
-            echo "CAPSULE_IMAGE_IDENTITY_MISMATCH: expected $EXPECTED_ID, got $ACTUAL_ID"
+          CANONICAL="ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e"
+          docker pull "${CANONICAL}"
+          REPO_DIGESTS=$(docker image inspect "${CANONICAL}" --format '{{json .RepoDigests}}')
+          echo "Resolved RepoDigests: ${REPO_DIGESTS}"
+          if ! echo "${REPO_DIGESTS}" | grep -qF "sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e"; then
+            echo "CAPSULE_REGISTRY_DIGEST_MISMATCH: approved digest not found in resolved RepoDigests"
+            echo "Expected: ${CANONICAL}"
+            echo "Got: ${REPO_DIGESTS}"
             exit 1
           fi
-          echo "Capsule image identity verified: $ACTUAL_ID"
+          echo "Capsule registry digest verified: ${CANONICAL}"
 
       - name: Test
         run: npm test
