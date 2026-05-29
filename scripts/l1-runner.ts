@@ -1,17 +1,24 @@
 // Stage 2B L1 — Fail-closed acceptance harness (non-live)
 //
-// Authorization: Stage 2B L1 Harness Implementation Authorization — NO LIVE EXECUTION
+// Authorization: Stage 2B L1 Harness Trust-Boundary Repair Authorization — NO LIVE EXECUTION
 //
 // Enforcement boundaries:
-//   - POWERPLANT_HOME must be under /tmp/powerplant-stage2b-acceptance/
-//   - Fixture A must already be in the isolated registry (no promoteSkill invoked here)
-//   - Pre/post real-state manifest equality enforced
-//   - Pre/post oracle SHA equality enforced
+//   - POWERPLANT_HOME must be a canonical descendant run directory inside
+//     /tmp/powerplant-stage2b-acceptance/ — verified via realpathSync + path.relative
+//   - Symlinks, traversal, relative paths, direct real-state paths rejected before
+//     any registry or environment read
+//   - Fixture A verified by immutable content hash from L0 receipt, not name only
+//   - Duplicate/ambiguous active Fixture A entries rejected
+//   - Pre/post real-state manifest equality enforced after every terminal exit path,
+//     including pilot throw, oracle throw, and oracle-stage mutation
+//   - Phase A/B timestamps validated (Phase A invocationTimestamp < Phase B completionTimestamp)
+//     in addition to JSONL line ordering
+//   - Capsule image identity verified (capsuleImageIdentityVerified === true)
+//   - Output-cap proof asserted (outputCapped === false for clean PASS)
+//   - Independent workspace payload hash computed before oracle and compared to receipt
+//   - Evaluator cleanup confirmed (cleanupComplete === true)
 //   - builtinToolUseCount === 0 enforced
-//   - Phase A before Phase B in audit JSONL enforced
 //   - Docker capsule oracle evaluation only (no host execution)
-//   - hostExecutionOccurred === false required on receipt
-//   - capsule cleanup required on receipt
 //   - Any missing or contradictory evidence → fails closed
 //
 // FORBIDDEN by this authorization:
@@ -47,6 +54,7 @@ import type {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 export const ACCEPTANCE_HOME_PREFIX = '/tmp/powerplant-stage2b-acceptance/'
+const ACCEPTANCE_BASE_DIR = ACCEPTANCE_HOME_PREFIX.slice(0, -1)
 const REQUIRED_COMPOSITION_POLICY = 'task-first-guidance-supplementary-v1'
 const WORKSPACE_STATUS_REL = path.join('src', 'status.js')
 
@@ -87,8 +95,14 @@ export interface L1HarnessEvidence {
   phaseBPresent: boolean
   phaseABeforePhaseB: boolean
   capsuleReceipt: CapsuleEvaluatorReceipt | null
+  // Execution provenance — mapped from capsule receipt
   hostExecutionOccurred: false | null
-  capsuleCleanedUp: boolean | null
+  evaluatorCleanedUp: boolean | null
+  capsuleImageIdentityVerified: boolean | null
+  outputCapped: boolean | null
+  // Workspace payload integrity
+  workspacePayloadHash: string | null
+  workspacePayloadHashVerified: boolean | null
   oracleVerdict: string | null
 }
 
@@ -103,10 +117,19 @@ export interface L1HarnessResult {
   evidence: L1HarnessEvidence
 }
 
-export interface L1HarnessOpts {
+// ── Public production interface — no injectable bypass seams ──────────────────
+
+export interface L1HarnessPublicOpts {
   powerplantHome: string
   fixtureASkillId: string
+  /** Expected content hash of Fixture A — must come from the L0 acceptance receipt */
+  fixtureAContentHash: string
   pilotExecutor: L1PilotExecutor
+}
+
+// ── Internal interface — injectable seams for deterministic testing only ──────
+
+export interface L1HarnessInternalOpts extends L1HarnessPublicOpts {
   oracleEvaluator?: L1OracleEvaluator
   /** For deterministic tests only — overrides real ~/.powerplant/state/ */
   _stateRootForTesting?: string
@@ -143,9 +166,15 @@ function computeStateManifestHash(stateDir: string): string {
   return crypto.createHash('sha256').update(manifest, 'utf-8').digest('hex')
 }
 
+interface AuditPairEntry<T> {
+  record: T
+  lineIndex: number
+  raw: Record<string, unknown>
+}
+
 interface AuditPair {
-  phaseA: { record: SkillInvocationPhaseARecord; lineIndex: number } | null
-  phaseB: { record: SkillInvocationPhaseBRecord; lineIndex: number } | null
+  phaseA: AuditPairEntry<SkillInvocationPhaseARecord> | null
+  phaseB: AuditPairEntry<SkillInvocationPhaseBRecord> | null
 }
 
 function readAuditPair(auditPath: string, invocationId: string): AuditPair {
@@ -160,10 +189,10 @@ function readAuditPair(auditPath: string, invocationId: string): AuditPair {
       const rec = JSON.parse(line) as Record<string, unknown>
       if (rec['invocationId'] !== invocationId) return
       if (rec['phase'] === SKILL_INVOCATION_PHASE_A) {
-        phaseA = { record: rec as unknown as SkillInvocationPhaseARecord, lineIndex: idx }
+        phaseA = { record: rec as unknown as SkillInvocationPhaseARecord, lineIndex: idx, raw: rec }
       }
       if (rec['phase'] === SKILL_INVOCATION_PHASE_B) {
-        phaseB = { record: rec as unknown as SkillInvocationPhaseBRecord, lineIndex: idx }
+        phaseB = { record: rec as unknown as SkillInvocationPhaseBRecord, lineIndex: idx, raw: rec }
       }
     } catch { /* skip malformed lines */ }
   })
@@ -206,7 +235,11 @@ function emptyEvidence(partial: Partial<L1HarnessEvidence> = {}): L1HarnessEvide
     phaseABeforePhaseB: false,
     capsuleReceipt: null,
     hostExecutionOccurred: null,
-    capsuleCleanedUp: null,
+    evaluatorCleanedUp: null,
+    capsuleImageIdentityVerified: null,
+    outputCapped: null,
+    workspacePayloadHash: null,
+    workspacePayloadHashVerified: null,
     oracleVerdict: null,
     ...partial,
   }
@@ -220,38 +253,126 @@ function failed(reason: string, evidence: L1HarnessEvidence): L1HarnessResult {
   return { verdict: 'L1_HARNESS_FAILED', blockerReason: reason, evidence }
 }
 
-// ── Main entry point ──────────────────────────────────────────────────────────
+// ── Production entry point — no injectable seams ─────────────────────────────
 
-export async function runL1Harness(opts: L1HarnessOpts): Promise<L1HarnessResult> {
-  const { powerplantHome, fixtureASkillId, pilotExecutor } = opts
+export async function runL1Harness(opts: L1HarnessPublicOpts): Promise<L1HarnessResult> {
+  return _runL1HarnessInternal(opts)
+}
+
+// ── Test-only entry point — injectable seams for deterministic tests ──────────
+
+export async function _runL1HarnessForTesting(opts: L1HarnessInternalOpts): Promise<L1HarnessResult> {
+  return _runL1HarnessInternal(opts)
+}
+
+// ── Core implementation ───────────────────────────────────────────────────────
+
+async function _runL1HarnessInternal(opts: L1HarnessInternalOpts): Promise<L1HarnessResult> {
+  const { powerplantHome, fixtureASkillId, fixtureAContentHash, pilotExecutor } = opts
   const evalOracle = opts.oracleEvaluator ?? defaultOracleEvaluator
   const stateRoot = opts._stateRootForTesting ?? path.join(os.homedir(), '.powerplant', 'state')
 
-  // ── 1. POWERPLANT_HOME prefix guard ──────────────────────────────────────────
-  if (!powerplantHome || !powerplantHome.startsWith(ACCEPTANCE_HOME_PREFIX)) {
+  // ── 1. POWERPLANT_HOME canonical containment check ───────────────────────────
+  // Rejects empty paths, relative paths, non-existent targets, symlink escapes,
+  // traversal escapes, and any path that resolves to or inside the real Powerplant home.
+  // No registry read or session invocation may occur before containment is proven.
+
+  if (!powerplantHome || !path.isAbsolute(powerplantHome)) {
     return blocked(
-      `POWERPLANT_HOME must start with ${ACCEPTANCE_HOME_PREFIX}, got: ${powerplantHome || '(empty)'}`,
+      `POWERPLANT_HOME must be a non-empty absolute path, got: ${powerplantHome || '(empty)'}`,
       { powerplantHome, fixtureASkillId },
     )
   }
 
-  // ── 2. Fixture A registry check — no promoteSkill ─────────────────────────────
-  const prevHome = process.env['POWERPLANT_HOME']
+  if (!fs.existsSync(ACCEPTANCE_BASE_DIR)) {
+    return blocked(
+      `L1 acceptance root ${ACCEPTANCE_BASE_DIR} does not exist — run L0 acceptance bootstrap first`,
+      { powerplantHome, fixtureASkillId },
+    )
+  }
+
+  let resolvedBase: string
+  try {
+    resolvedBase = fs.realpathSync(ACCEPTANCE_BASE_DIR)
+  } catch {
+    return blocked(
+      `L1 acceptance root ${ACCEPTANCE_BASE_DIR} is not resolvable`,
+      { powerplantHome, fixtureASkillId },
+    )
+  }
+
+  let resolvedHome: string
+  try {
+    resolvedHome = fs.realpathSync(powerplantHome)
+  } catch {
+    return blocked(
+      `POWERPLANT_HOME ${powerplantHome} does not exist or is not resolvable — symlinks or traversal rejected`,
+      { powerplantHome, fixtureASkillId },
+    )
+  }
+
+  // Must be a strict child of the acceptance root (path.relative returns non-empty, non-'..',  non-'.')
+  const rel = path.relative(resolvedBase, resolvedHome)
+  if (!rel || rel === '.' || rel.startsWith('..') || path.isAbsolute(rel)) {
+    return blocked(
+      `POWERPLANT_HOME must be a descendant run directory strictly inside ${ACCEPTANCE_BASE_DIR}; ` +
+      `resolved path escapes the acceptance root or equals it`,
+      { powerplantHome, fixtureASkillId },
+    )
+  }
+
+  // Must not resolve to or inside the protected real Powerplant home
+  const realPPHome = path.join(os.homedir(), '.powerplant')
+  let resolvedRealPPHome: string | null = null
+  try { resolvedRealPPHome = fs.realpathSync(realPPHome) } catch { /* doesn't exist yet */ }
+  if (resolvedRealPPHome !== null) {
+    if (
+      resolvedHome === resolvedRealPPHome ||
+      resolvedHome.startsWith(resolvedRealPPHome + path.sep)
+    ) {
+      return blocked(
+        `POWERPLANT_HOME resolves to or inside the protected real Powerplant home ${realPPHome}`,
+        { powerplantHome, fixtureASkillId },
+      )
+    }
+  }
+
+  // ── 2. Fixture A registry check — hash-bound, no promoteSkill ────────────────
+  // Must check expected hash before any registry is read.
+
+  if (!fixtureAContentHash) {
+    return blocked(
+      'fixtureAContentHash is required — must be the immutable content hash from the L0 acceptance receipt',
+      { powerplantHome, fixtureASkillId },
+    )
+  }
+
+  let fixtureBlockReason: string | null = null
   let fixtureAFound = false
+  const prevHome = process.env['POWERPLANT_HOME']
   try {
     process.env['POWERPLANT_HOME'] = powerplantHome
     const skills = listSkills()
-    fixtureAFound = skills.some(s => s.name === fixtureASkillId && !s.isDisabled)
+    const activeMatches = skills.filter(s => s.name === fixtureASkillId && !s.isDisabled)
+    if (activeMatches.length === 0) {
+      fixtureBlockReason = `Fixture A "${fixtureASkillId}" not found or disabled in isolated registry — run acceptance-bootstrap first`
+    } else if (activeMatches.length > 1) {
+      fixtureBlockReason = `Duplicate ambiguous active Fixture A entries for "${fixtureASkillId}" in isolated registry`
+    } else {
+      const fixtureSkill = activeMatches[0]!
+      if (fixtureSkill.contentHash !== fixtureAContentHash) {
+        fixtureBlockReason = `Fixture A content hash mismatch: expected ${fixtureAContentHash}, got ${fixtureSkill.contentHash}`
+      } else {
+        fixtureAFound = true
+      }
+    }
   } finally {
     if (prevHome === undefined) delete process.env['POWERPLANT_HOME']
     else process.env['POWERPLANT_HOME'] = prevHome
   }
 
-  if (!fixtureAFound) {
-    return blocked(
-      `Fixture A "${fixtureASkillId}" not found (or disabled) in isolated registry under ${powerplantHome} — run acceptance-bootstrap first`,
-      { powerplantHome, fixtureASkillId, fixtureAFound },
-    )
+  if (fixtureBlockReason !== null) {
+    return blocked(fixtureBlockReason, { powerplantHome, fixtureASkillId, fixtureAFound })
   }
 
   // ── 3. Oracle file hash (pre-run) ─────────────────────────────────────────────
@@ -268,34 +389,47 @@ export async function runL1Harness(opts: L1HarnessOpts): Promise<L1HarnessResult
   // ── 4. Real-state manifest hash (pre-run) ─────────────────────────────────────
   const preRunManifestHash = computeStateManifestHash(stateRoot)
 
-  // ── 5. Execute pilot via injected executor ────────────────────────────────────
+  // ── 5. Execute pilot via injected executor ─────────────────────────────────────
+  // Post-manifest is computed in both success and throw paths.
   let pilotResult: L1PilotResult
   try {
     pilotResult = await pilotExecutor()
   } catch (err) {
+    const postPilotManifestHash = computeStateManifestHash(stateRoot)
+    const manifestUnchanged = preRunManifestHash === postPilotManifestHash
+    if (!manifestUnchanged) {
+      return blocked(
+        'Real-state manifest changed during failed pilot execution — real Powerplant state root was mutated',
+        {
+          powerplantHome, fixtureASkillId, fixtureAFound,
+          preRunManifestHash, postRunManifestHash: postPilotManifestHash, manifestUnchanged: false,
+          preRunOracleHash, postRunOracleHash: preRunOracleHash, oracleHashUnchanged: true,
+        },
+      )
+    }
     return {
       verdict: 'L1_HARNESS_FAILED',
       blockerReason: `Pilot executor threw: ${err instanceof Error ? err.message : String(err)}`,
       evidence: emptyEvidence({
         powerplantHome, fixtureASkillId, fixtureAFound,
-        preRunOracleHash, postRunOracleHash: '', oracleHashUnchanged: false,
-        preRunManifestHash, postRunManifestHash: '', manifestUnchanged: false,
+        preRunOracleHash, postRunOracleHash: preRunOracleHash, oracleHashUnchanged: true,
+        preRunManifestHash, postRunManifestHash: postPilotManifestHash, manifestUnchanged,
       }),
     }
   }
 
   const { report, builtinToolUseCount } = pilotResult
 
-  // ── 6. Post-run real-state manifest check ─────────────────────────────────────
-  const postRunManifestHash = computeStateManifestHash(stateRoot)
-  const manifestUnchanged = preRunManifestHash === postRunManifestHash
+  // ── 6. Post-pilot real-state manifest check ────────────────────────────────────
+  const postPilotManifestHash = computeStateManifestHash(stateRoot)
+  const manifestAfterPilot = preRunManifestHash === postPilotManifestHash
 
-  if (!manifestUnchanged) {
+  if (!manifestAfterPilot) {
     return blocked(
       'Real-state manifest changed during session — real Powerplant state root was mutated',
       {
         powerplantHome, fixtureASkillId, fixtureAFound,
-        preRunManifestHash, postRunManifestHash, manifestUnchanged: false,
+        preRunManifestHash, postRunManifestHash: postPilotManifestHash, manifestUnchanged: false,
         preRunOracleHash, postRunOracleHash: preRunOracleHash, oracleHashUnchanged: true,
       },
     )
@@ -315,18 +449,18 @@ export async function runL1Harness(opts: L1HarnessOpts): Promise<L1HarnessResult
       'Oracle file hash changed during session — oracle may have been tampered with',
       {
         powerplantHome, fixtureASkillId, fixtureAFound,
-        preRunManifestHash, postRunManifestHash, manifestUnchanged: true,
+        preRunManifestHash, postRunManifestHash: postPilotManifestHash, manifestUnchanged: true,
         preRunOracleHash, postRunOracleHash, oracleHashUnchanged: false,
       },
     )
   }
 
-  // ── 8. Built-in tool count ────────────────────────────────────────────────────
+  // ── 8. Built-in tool count ─────────────────────────────────────────────────────
   const builtinToolCountZero = builtinToolUseCount === 0
 
   const baseEvidence: Partial<L1HarnessEvidence> = {
     powerplantHome, fixtureASkillId, fixtureAFound,
-    preRunManifestHash, postRunManifestHash, manifestUnchanged: true,
+    preRunManifestHash, postRunManifestHash: postPilotManifestHash, manifestUnchanged: true,
     preRunOracleHash, postRunOracleHash, oracleHashUnchanged: true,
     builtinToolUseCount, builtinToolCountZero,
     operatorTaskHash: report.operatorTaskHash,
@@ -342,7 +476,7 @@ export async function runL1Harness(opts: L1HarnessOpts): Promise<L1HarnessResult
     )
   }
 
-  // ── 9. Phase A/B audit record checks ─────────────────────────────────────────
+  // ── 9. Phase A/B audit record checks — line ordering ─────────────────────────
   const { phaseA, phaseB } = readAuditPair(report.auditRecordPath, report.invocationId)
   const phaseAPresent = phaseA !== null
   const phaseBPresent = phaseB !== null
@@ -356,7 +490,7 @@ export async function runL1Harness(opts: L1HarnessOpts): Promise<L1HarnessResult
   if (!phaseBPresent) return failed('Phase B record missing from audit JSONL', emptyEvidence(withPhases))
   if (!phaseABeforePhaseB) return failed('Phase A does not precede Phase B in audit JSONL', emptyEvidence(withPhases))
 
-  // ── 10. Required Phase A field checks ────────────────────────────────────────
+  // ── 10. Required Phase A field checks ──────────────────────────────────────────
   const pA = phaseA!.record
   if (!pA.operatorTaskHash) {
     return failed('operatorTaskHash missing from Phase A record', emptyEvidence(withPhases))
@@ -372,7 +506,42 @@ export async function runL1Harness(opts: L1HarnessOpts): Promise<L1HarnessResult
     )
   }
 
-  // ── 11. Phase B eligibility cross-check ──────────────────────────────────────
+  // ── 11. Timestamp-based ordering proof ─────────────────────────────────────────
+  // JSONL line ordering alone is insufficient; timestamps must be validated.
+  // Phase A invocationTimestamp must precede Phase B completionTimestamp.
+  const phaseATimestamp = phaseA!.raw['invocationTimestamp']
+  const phaseBTimestamp = phaseB!.raw['completionTimestamp']
+
+  if (typeof phaseATimestamp !== 'string' || !phaseATimestamp) {
+    return failed('Phase A invocationTimestamp missing or not a string — required for temporal proof', emptyEvidence(withPhases))
+  }
+  const tsA = Date.parse(phaseATimestamp)
+  if (isNaN(tsA)) {
+    return failed(
+      `Phase A invocationTimestamp "${phaseATimestamp}" is not parseable as ISO 8601`,
+      emptyEvidence(withPhases),
+    )
+  }
+
+  if (typeof phaseBTimestamp !== 'string' || !phaseBTimestamp) {
+    return failed('Phase B completionTimestamp missing — required for temporal ordering proof', emptyEvidence(withPhases))
+  }
+  const tsB = Date.parse(phaseBTimestamp)
+  if (isNaN(tsB)) {
+    return failed(
+      `Phase B completionTimestamp "${phaseBTimestamp}" is not parseable as ISO 8601`,
+      emptyEvidence(withPhases),
+    )
+  }
+
+  if (tsA >= tsB) {
+    return failed(
+      `Phase A invocationTimestamp (${phaseATimestamp}) does not precede Phase B completionTimestamp (${phaseBTimestamp}) — temporal ordering proof failed`,
+      emptyEvidence({ ...withPhases, phaseABeforePhaseB: false }),
+    )
+  }
+
+  // ── 12. Phase B eligibility cross-check ────────────────────────────────────────
   const pB = phaseB!.record
   if (pB.patchEligibleForApplication !== report.patchEligibleForApplication) {
     return failed(
@@ -381,53 +550,105 @@ export async function runL1Harness(opts: L1HarnessOpts): Promise<L1HarnessResult
     )
   }
 
-  // ── 12. Oracle evaluation ─────────────────────────────────────────────────────
+  // ── 13. Oracle evaluation — with independent workspace payload hash ─────────────
   const workspaceStatusPath = path.join(SPRINT4A_RUNTIME_BASE, report.runId, 'workspace', WORKSPACE_STATUS_REL)
   const patchedStatusContent = fs.existsSync(workspaceStatusPath)
     ? fs.readFileSync(workspaceStatusPath, 'utf-8')
     : ''
 
+  // Independent hash computed BEFORE oracle receives the content
+  const preOraclePayloadHash = crypto.createHash('sha256').update(patchedStatusContent, 'utf-8').digest('hex')
+
   const preflightId = randomUUID()
   let capsuleReceipt: CapsuleEvaluatorReceipt | null = null
   let oracleVerdict: string | null = null
+  let postOracleManifestHash: string
 
   try {
     capsuleReceipt = await evalOracle({ patchedStatusContent, preflightId })
     oracleVerdict = capsuleReceipt.terminalOracleStatus
+    postOracleManifestHash = computeStateManifestHash(stateRoot)
   } catch (err) {
+    postOracleManifestHash = computeStateManifestHash(stateRoot)
+    const manifestUnchanged = preRunManifestHash === postOracleManifestHash
+    if (!manifestUnchanged) {
+      return blocked(
+        'Real-state manifest changed during oracle evaluation (oracle threw) — real Powerplant state root was mutated',
+        {
+          powerplantHome, fixtureASkillId, fixtureAFound,
+          preRunManifestHash, postRunManifestHash: postOracleManifestHash, manifestUnchanged: false,
+          preRunOracleHash, postRunOracleHash, oracleHashUnchanged: true,
+        },
+      )
+    }
     return failed(
       `Oracle evaluation threw: ${err instanceof Error ? err.message : String(err)}`,
-      emptyEvidence({ ...withPhases, capsuleReceipt: null, oracleVerdict: null }),
+      emptyEvidence({
+        ...withPhases,
+        preRunManifestHash, postRunManifestHash: postOracleManifestHash, manifestUnchanged,
+        capsuleReceipt: null, oracleVerdict: null,
+      }),
     )
   }
 
-  const hostExecutionOccurred = capsuleReceipt.candidateCodeExecutedOnHost
-  const capsuleCleanedUp = capsuleReceipt.cleanupComplete
+  // Final manifest check — covers the complete run including oracle evaluation
+  const finalManifestUnchanged = preRunManifestHash === postOracleManifestHash
+  if (!finalManifestUnchanged) {
+    return blocked(
+      'Real-state manifest changed during oracle evaluation — real Powerplant state root was mutated',
+      {
+        powerplantHome, fixtureASkillId, fixtureAFound,
+        preRunManifestHash, postRunManifestHash: postOracleManifestHash, manifestUnchanged: false,
+        preRunOracleHash, postRunOracleHash, oracleHashUnchanged: true,
+      },
+    )
+  }
+
+  // Extract capsule receipt evidence fields
+  const hostExecutionOccurred = capsuleReceipt!.candidateCodeExecutedOnHost
+  const evaluatorCleanedUp = capsuleReceipt!.cleanupComplete
+  const capsuleImageIdentityVerified = capsuleReceipt!.capsuleImageIdentityVerified
+  const outputCapped = capsuleReceipt!.outputCapped
+  const workspacePayloadHashFromReceipt = capsuleReceipt!.workspacePayloadHash
+  const workspacePayloadHashVerified = preOraclePayloadHash === workspacePayloadHashFromReceipt
 
   const finalEvidence: L1HarnessEvidence = emptyEvidence({
     ...withPhases,
+    preRunManifestHash, postRunManifestHash: postOracleManifestHash, manifestUnchanged: true,
     capsuleReceipt,
     hostExecutionOccurred,
-    capsuleCleanedUp,
+    evaluatorCleanedUp,
+    capsuleImageIdentityVerified,
+    outputCapped,
+    workspacePayloadHash: workspacePayloadHashFromReceipt,
+    workspacePayloadHashVerified,
     oracleVerdict,
   })
 
-  // hostExecutionOccurred is typed false on the receipt but validate it defensively
+  // ── 14. Capsule receipt assertion checks ────────────────────────────────────────
   if ((hostExecutionOccurred as unknown) !== false) {
     return failed('hostExecutionOccurred is not false on capsule receipt', finalEvidence)
   }
-  if (!capsuleCleanedUp) {
-    return failed('capsule cleanup not confirmed on receipt (cleanupComplete !== true)', finalEvidence)
+  if (!evaluatorCleanedUp) {
+    return failed('evaluator cleanup not confirmed on receipt (cleanupComplete !== true)', finalEvidence)
+  }
+  if (!capsuleImageIdentityVerified) {
+    return failed('capsule image identity verification failed (capsuleImageIdentityVerified !== true)', finalEvidence)
+  }
+  if (outputCapped) {
+    return failed(
+      'output was capped during oracle evaluation — oracle did not run to completion within output limits',
+      finalEvidence,
+    )
+  }
+  if (!workspacePayloadHashVerified) {
+    return failed(
+      `Independent workspace payload hash mismatch: computed ${preOraclePayloadHash}, receipt has ${workspacePayloadHashFromReceipt}`,
+      finalEvidence,
+    )
   }
   if (oracleVerdict !== 'PASS') {
     return failed(`Oracle verdict is "${oracleVerdict}" — required "PASS"`, finalEvidence)
-  }
-  if (report.patchEligibleForApplication && oracleVerdict !== 'PASS') {
-    // Redundant guard — belt-and-suspenders for the broker-eligible-but-oracle-fail case
-    return failed(
-      'patchEligibleForApplication === true but oracle verdict is not PASS',
-      finalEvidence,
-    )
   }
 
   return { verdict: 'L1_CANDIDATE_PASS', blockerReason: '', evidence: finalEvidence }
