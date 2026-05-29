@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Image tag — must be explicitly versioned, not "latest" (e.g. node-test-js-v1.0.0)'
+        description: 'Image tag - must be explicitly versioned, not "latest" (e.g. node-test-js-v1.0.0)'
         required: true
         default: 'node-test-js-v1.0.0'
 
@@ -75,7 +75,7 @@ jobs:
           echo "Canonical ref:    ${CANONICAL}"
           echo "========================================================"
           echo ""
-          echo "OWNER ACTION REQUIRED — record this canonical reference:"
+          echo "OWNER ACTION REQUIRED - record this canonical reference:"
           echo ""
           echo "  src/config/constants.ts"
           echo "    CAPSULE_V1_EXPECTED_REPO_DIGEST = '${CANONICAL}'"
