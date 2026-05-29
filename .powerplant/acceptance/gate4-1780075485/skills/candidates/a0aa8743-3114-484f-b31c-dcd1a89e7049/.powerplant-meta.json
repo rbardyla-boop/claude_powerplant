@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "a0aa8743-3114-484f-b31c-dcd1a89e7049",
+  "name": "fixture-a-benign",
+  "version": 1,
+  "description": "Benign supplementary guidance fixture for Stage 2B L0 acceptance only.",
+  "tags": [],
+  "createdAt": "2026-05-29T00:00:00.000Z",
+  "promotedAt": null,
+  "sourceRunId": null,
+  "sha256": null,
+  "evaluationPassed": false,
+  "evaluationAt": null
+}

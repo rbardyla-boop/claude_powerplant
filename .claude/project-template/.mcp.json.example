@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "example-tool-disabled-until-configured": {
+      "type": "http",
+      "url": "${EXAMPLE_MCP_URL:-https://example.invalid/mcp}",
+      "headers": {
+        "Authorization": "Bearer ${EXAMPLE_MCP_TOKEN}"
+      }
+    }
+  }
+}

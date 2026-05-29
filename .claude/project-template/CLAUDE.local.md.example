@@ -1,0 +1,14 @@
+# Local Private Overrides — do not commit
+
+## Machine-specific notes
+- Local run command or port:
+- Installed tools:
+- Performance limitations:
+
+## My temporary priority
+- Current task:
+- Do not touch:
+- Personal shortcuts:
+
+## Never store here
+Do not put credentials or API keys in this file. Use environment variables or a secret manager.
