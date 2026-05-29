@@ -215,6 +215,8 @@ npm run typecheck
 npm test
 ```
 
+CI runs `npm test` and `npx tsc --noEmit` from a clean checkout on every push and pull request to `master`/`main`. No `.env` file is present in CI; pilot-dependent integration tests are automatically skipped when `SPRINT4A_PILOT_SOURCE_PATH` is unset (see `.env.example`).
+
 ---
 
 ## Documentation Map

@@ -983,3 +983,51 @@ run `powerplant inspect` against it, confirm no pilot paths appear in the disclo
 **Accepted claim:** One canonical engineering journal now exists (`docs/BUILD_LOG.md`). Public claim language in the ledger and README matches the accepted trusted-directory boundary. No overclaims remain in public-facing documentation.
 
 **Next authorized action:** Gate 6B2B — CI workflow, restricted `.env` loading review, `SECURITY.md`, license verification, GitHub branch protection, secret scanning and push protection, and optional separate history-rewrite decision.
+
+---
+
+## Gate 6B2B — CI, Environment Safety, and Security Policy Hardening
+
+**Date:** 2026-05-29
+**Branch:** `feat/stage2b-preflight`
+
+**Objective:** Complete pre-push repository hardening: restrict Vitest env loading, add CI, add security policy, verify license status, and record final pre-push state.
+
+**Part 1 — Local commit inventory:**
+Branch HEAD = `origin/feat/stage2b-preflight` at start of this gate (zero local commits ahead). All prior Gate 6B1/6B2A commits were already on the remote. `882fdf7` is a Gate 6B2A commit ("establish maintained build log and align release status") confirmed present on origin.
+
+**Part 2 — Surface inspection findings:**
+
+| Surface | Finding |
+|---|---|
+| CI workflow | Absent — `.github/workflows/` directory did not exist |
+| Node version pin | Absent — no `.nvmrc`, `.node-version`, or `engines` field |
+| `SECURITY.md` | Absent |
+| License | Absent — `PUBLIC_RELEASE_LICENSE_DECISION_REQUIRED` |
+| `vitest.config.ts` `.env` loading | Broad empty-prefix `loadEnv('test', cwd, '')` — all `.env` vars including `ANTHROPIC_API_KEY` injected into test process |
+| `package-lock.json` | Present, lockfileVersion 3, tracked in git |
+
+**Actions taken:**
+
+- `vitest.config.ts`: narrowed `loadEnv` prefix from `''` to `'SPRINT4A_'`. Only `SPRINT4A_*` env vars are injected into the test process. `ANTHROPIC_API_KEY` and other credentials are no longer reachable via Vitest injection. Proof: `1042/1042` tests pass locally; clean checkout without `.env` passes `1002/1042` with 40 correctly skipped (pilot-dependent suites).
+- `.node-version`: added, pins Node 20.
+- `.github/workflows/ci.yml`: added clean-checkout CI workflow. Runs on push/PR to `master`/`main`; uses `actions/checkout@v4`, `actions/setup-node@v4` with `node-version-file: '.node-version'`; `npm ci`, `npx tsc --noEmit`, `npm test`; no secrets injected; live tests excluded by `vitest.config.ts`; pilot-integration tests skip automatically when `SPRINT4A_PILOT_SOURCE_PATH` is absent.
+- `SECURITY.md`: added at repo root. Covers: containment escape, credential leakage, evidence/receipt forgery, trusted-directory bypass, unintended live agent execution. Reports via GitHub private vulnerability reporting. Includes publication prerequisite: feature must be enabled in repository settings before policy is operative.
+- `README.md`: added one-line CI disclosure under Development section.
+- Release ledger Gate 6B2B section updated from PENDING to COMPLETE (pre-push local) with exact actions, remaining user-decisions, and repository-settings steps.
+
+**Validation:**
+
+- Current-checkout: `1042/1042` tests passing, typecheck clean.
+- Clean-checkout (no `.env`): `1002` passing, 40 skipped (pilot-dependent only), typecheck clean. `npm ci` succeeded from committed lockfile.
+
+**Accepted claim:** Vitest no longer injects credentials into the test environment. CI is configured for clean-checkout validation. `SECURITY.md` is in place pending private-reporting channel verification. No history rewrite performed. No live run executed.
+
+**Remaining user decisions before formal release:**
+
+- Select and add a `LICENSE` file.
+- Enable GitHub private vulnerability reporting in repository settings.
+- Enable GitHub branch protection and secret scanning in repository settings.
+- Optional: authorize history-rewrite decision for pre-Gate-6B1 historical exposure.
+
+**Next authorized action:** One normal forward push of the local Gate 6B2B commit stack after user review.

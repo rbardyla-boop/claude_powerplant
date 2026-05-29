@@ -267,20 +267,41 @@ Actions taken:
 Validation: `1042/1042` tests passing (local configured checkout); typecheck clean;
 no live runtime identifiers or operator-local paths introduced.
 
-#### Gate 6B2B — CI, Security Hardening, and Release Authorization — **PENDING**
+#### Gate 6B2B — CI, Security Hardening, and Release Authorization — **COMPLETE (pre-push local)**
 
-Required before public release:
+Actions completed (Gate 6B2B local commits):
 
-* CI workflow: configure GitHub Actions to run `npm test` and `npx tsc --noEmit` from a
-  clean checkout; verify pilot-dependent tests skip correctly when `SPRINT4A_PILOT_SOURCE_PATH`
-  is unset.
-* Restricted `.env` loading review: confirm `vitest.config.ts` `.env` load does not
-  leak secrets in CI.
-* SECURITY.md: create root-level security policy with contact method and scope.
-* License verification: confirm or add an appropriate root-level `LICENSE` file.
-* GitHub branch protection: require passing CI checks on `master`/`main` before merge.
-* Secret scanning and push protection: enable GitHub Advanced Security secret scanning.
-* Optional: separate authorized decision on history-rewrite to address already-public
+* **`.env` loading restricted**: `vitest.config.ts` narrowed from empty-prefix `loadEnv` to
+  `'SPRINT4A_'` prefix — only `SPRINT4A_*` variables are injected into the test process.
+  `ANTHROPIC_API_KEY` and other credentials are no longer injected by Vitest.
+  Proof: `1042/1042` tests pass with prefix narrowed; clean checkout passes `1002/1042`
+  with 40 conditionally skipped (pilot-integration suites skip when `SPRINT4A_PILOT_SOURCE_PATH`
+  is unset, as expected).
+* **`.node-version` added**: pins Node 20 per project runtime requirement.
+* **CI workflow added** at `.github/workflows/ci.yml`: runs on push/pull_request to
+  `master`/`main`; uses `actions/checkout@v4`, `actions/setup-node@v4` with
+  `node-version-file: '.node-version'`; `npm ci`, `npx tsc --noEmit`, `npm test`;
+  no secrets injected; live tests excluded; pilot-dependent tests skip automatically.
+* **`SECURITY.md` added**: covers containment escape, credential leakage, evidence forgery,
+  trusted-directory bypass, and unintended live agent execution; directs to GitHub private
+  vulnerability reporting. **Publication prerequisite**: repository owner must verify
+  GitHub private vulnerability reporting is enabled in repository settings before this
+  policy is operative.
+* **License**: no `LICENSE` file exists in the repository. A public reuse license has not
+  been selected. `PUBLIC_RELEASE_LICENSE_DECISION_REQUIRED` — this is a user decision
+  required before a formal public release/tag, even though the repository is currently
+  publicly visible.
+
+Remaining actions required before formal release:
+
+* **License**: user must select and add a `LICENSE` file.
+* **GitHub branch protection**: require passing CI checks on `master`/`main` before merge
+  (repository settings, not a local action).
+* **Secret scanning and push protection**: enable GitHub Advanced Security secret scanning
+  (repository settings, not a local action).
+* **GitHub private vulnerability reporting**: enable in repository settings → Security →
+  Code security → Private vulnerability reporting, so `SECURITY.md` is operative.
+* **Optional**: separate authorized decision on history-rewrite to address already-public
   historical runtime metadata exposure (live session IDs, agent IDs, environment IDs,
   operator-local paths in commits prior to Gate 6B1).
 
