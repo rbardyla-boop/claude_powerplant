@@ -245,3 +245,9 @@ Current tracked files have been sanitized of identified live runtime identifiers
 - Mount real project directories into the executor
 - Support multi-agent workflows
 - Claim L2–L7 completion or overall production readiness of the trust kernel
+
+---
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

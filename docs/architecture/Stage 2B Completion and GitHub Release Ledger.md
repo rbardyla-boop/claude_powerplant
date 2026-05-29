@@ -267,7 +267,7 @@ Actions taken:
 Validation: `1042/1042` tests passing (local configured checkout); typecheck clean;
 no live runtime identifiers or operator-local paths introduced.
 
-#### Gate 6B2B — CI, Security Hardening, and Release Authorization — **COMPLETE (pre-push local)**
+#### Gate 6B2B — CI, Security Hardening, and Release Authorization — **CLOSED**
 
 Actions completed (Gate 6B2B local commits):
 
@@ -279,31 +279,72 @@ Actions completed (Gate 6B2B local commits):
   is unset, as expected).
 * **`.node-version` added**: pins Node 20 per project runtime requirement.
 * **CI workflow added** at `.github/workflows/ci.yml`: runs on push/pull_request to
-  `master`/`main`; uses `actions/checkout@v4`, `actions/setup-node@v4` with
+  `master`/`main`; uses `actions/checkout@v4` (later upgraded to `@v6` in Gate 6B2C),
+  `actions/setup-node@v4` (later upgraded to `@v6` in Gate 6B2C) with
   `node-version-file: '.node-version'`; `npm ci`, `npx tsc --noEmit`, `npm test`;
   no secrets injected; live tests excluded; pilot-dependent tests skip automatically.
 * **`SECURITY.md` added**: covers containment escape, credential leakage, evidence forgery,
   trusted-directory bypass, and unintended live agent execution; directs to GitHub private
-  vulnerability reporting. **Publication prerequisite**: repository owner must verify
-  GitHub private vulnerability reporting is enabled in repository settings before this
-  policy is operative.
-* **License**: no `LICENSE` file exists in the repository. A public reuse license has not
-  been selected. `PUBLIC_RELEASE_LICENSE_DECISION_REQUIRED` — this is a user decision
-  required before a formal public release/tag, even though the repository is currently
-  publicly visible.
+  vulnerability reporting.
+* **License — Apache-2.0 selected and added**: `LICENSE` file created containing the
+  unmodified Apache License, Version 2.0 text. `README.md` updated with `## License`
+  section referencing `LICENSE`.
+* **GitHub Private Vulnerability Reporting confirmed enabled**: repository owner confirmed
+  that GitHub Private Vulnerability Reporting is enabled in repository settings. `SECURITY.md`
+  is now operative through that private reporting channel.
+* **Historical non-credential runtime metadata**: remains in already-public Git history;
+  no history rewrite was performed or authorized.
 
 Remaining actions required before formal release:
 
-* **License**: user must select and add a `LICENSE` file.
 * **GitHub branch protection**: require passing CI checks on `master`/`main` before merge
-  (repository settings, not a local action).
+  (repository settings, not a local action). Pending post-push verification.
 * **Secret scanning and push protection**: enable GitHub Advanced Security secret scanning
-  (repository settings, not a local action).
-* **GitHub private vulnerability reporting**: enable in repository settings → Security →
-  Code security → Private vulnerability reporting, so `SECURITY.md` is operative.
+  (repository settings, not a local action). Owner confirmation not yet received.
+* **Hosted CI run**: CI workflow present and pushed; first hosted `ubuntu-latest` run
+  pending verification after push. See Gate 6B2C for CI repair status.
 * **Optional**: separate authorized decision on history-rewrite to address already-public
   historical runtime metadata exposure (live session IDs, agent IDs, environment IDs,
   operator-local paths in commits prior to Gate 6B1).
+
+#### Gate 6B2C — CI Capsule Provisioning Repair and Actions Upgrade — **PARTIALLY BLOCKED**
+
+**CI failure observed:** First hosted GitHub Actions run failed. P0-C and P0-E capsule tests
+emitted `CAPSULE_IMAGE_IDENTITY_MISMATCH: expected sha256:f496aac9..., got null (image not found)`.
+The evaluator correctly refused to execute candidate code. This is a CI provisioning failure:
+the workflow did not build `powerplant-evaluator:node-test-js-v1` before running `npm test`.
+
+**Capsule trust-root case determined: Case B — trust root is not reproducible from a clean build.**
+
+Audit result: a clean `docker build --no-cache docker/capsule-v1/` on the current
+`node:20-bookworm` base produces `sha256:cc4ae15d...`, not the pinned
+`sha256:f496aac9...`. The base image tag has moved since the capsule identity baseline
+was established. The current Dockerfile pins by mutable tag, not by immutable digest.
+
+**Actions taken:**
+
+* **Actions upgrade applied**: `actions/checkout@v4` → `@v6`, `actions/setup-node@v4` → `@v6`
+  in `.github/workflows/ci.yml`. Addresses GitHub Node.js 20 action-runtime deprecation warnings
+  without altering the project Node version (still governed by `.node-version`).
+* **No capsule constant changed**: `CAPSULE_V1_EXPECTED_IMAGE_ID` and the Dockerfile remain
+  unchanged. A new capsule identity baseline requires a new reviewed P0-C/P0-E proof report
+  and an explicit ledger entry.
+* **No P0-C/P0-E tests skipped or weakened**: capsule tests remain in the suite; they will
+  continue to fail in CI until the capsule provisioning is repaired.
+
+**CI remains blocked pending capsule trust-root resolution.** Required repair path (not
+authorized in this gate — requires separate authorization):
+
+1. Pin `docker/capsule-v1/Dockerfile` base image by immutable digest
+   (e.g., `FROM node:20-bookworm@sha256:<pinned-digest>`).
+2. Perform a clean `docker build` to produce a new reproducible image ID.
+3. Add a CI step to build and verify the capsule image before `npm test`.
+4. Record the new capsule identity in `CAPSULE_V1_EXPECTED_IMAGE_ID` and
+   `docker/capsule-v1/build-manifest.json`.
+5. Run the full P0-C/P0-E suite locally against the rebuilt image and record a new proof entry.
+6. Commit as a new reviewed capsule baseline; obtain explicit authorization before pushing.
+
+**Verdict:** `GATE6B2C_CAPSULE_TRUST_ROOT_NOT_REPRODUCIBLE_BLOCKS_RELEASE`
 
 ## Public Claim Boundary
 

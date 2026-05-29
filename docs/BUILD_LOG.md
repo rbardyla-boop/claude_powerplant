@@ -1031,3 +1031,105 @@ Branch HEAD = `origin/feat/stage2b-preflight` at start of this gate (zero local 
 - Optional: authorize history-rewrite decision for pre-Gate-6B1 historical exposure.
 
 **Next authorized action:** One normal forward push of the local Gate 6B2B commit stack after user review.
+
+---
+
+## Gate 6B2B Closure — Apache-2.0 License and Owner Decisions
+
+**Date:** 2026-05-29
+**Branch:** `feat/stage2b-preflight`
+
+**Objective:** Close the two remaining owner decisions from Gate 6B2B (license selection and
+GitHub Private Vulnerability Reporting) and prepare the local commit for forward push.
+
+**Actions taken:**
+
+- **License selected and added:** Repository owner selected Apache License 2.0. `LICENSE` created
+  with the unmodified Apache License, Version 2.0 text (standard ASF form; no paraphrasing, no
+  added legal notice, no restrictions inconsistent with Apache-2.0).
+- **README updated:** `## License` section added referencing `LICENSE`.
+- **GitHub Private Vulnerability Reporting confirmed:** Repository owner confirmed that GitHub
+  Private Vulnerability Reporting is enabled in repository settings. `SECURITY.md` is now
+  operative through that private reporting channel.
+- **Gate 6B2B section in release ledger** updated from `COMPLETE (pre-push local)` to `CLOSED`
+  with factual entries for license addition and PVR confirmation.
+- **No production code, tests, or acceptance evidence modified.**
+
+**Validation:** Tests and typecheck unchanged from Gate 6B2B baseline (1042/1042 local;
+typecheck clean). No new runtime identifiers or credentials introduced. Worktree clean after commit.
+
+**Remaining open before formal release:**
+- Hosted CI run: pending push and verification (see Gate 6B2C).
+- GitHub branch protection: pending post-push configuration in repository settings.
+- Secret scanning and push protection: pending owner confirmation.
+- Optional: separate authorized history-rewrite decision.
+
+---
+
+## Gate 6B2C — CI Capsule Provisioning Failure Analysis and Actions Upgrade
+
+**Date:** 2026-05-29
+**Branch:** `feat/stage2b-preflight`
+
+**Objective:** Diagnose the observed GitHub Actions CI failure, determine the capsule
+trust-root case, implement the permitted atomic repair, and record the blocked state.
+
+**CI failure observed:**
+
+First hosted GitHub Actions run (`ubuntu-latest`) failed. P0-C and P0-E capsule tests emitted:
+
+```
+CAPSULE_IMAGE_IDENTITY_MISMATCH:
+expected sha256:f496aac93ff3459a5142f2e37aedb025c414f5a7244e299160ae82a3aa29ad48,
+got null (image not found).
+Execution refused before any candidate code runs.
+```
+
+Root cause: the CI workflow runs `npm test` without first building the capsule evaluator image.
+The P0-C/P0-E tests call `docker image inspect powerplant-evaluator:node-test-js-v1`; when the
+image is absent, `getActualCapsuleImageId()` returns `null`; execution is refused before any
+candidate code runs. The evaluator behaved correctly — this is a provisioning gap, not a
+test-design failure.
+
+**Capsule trust-root case: Case B — trust root is not CI-reproducible from a clean build.**
+
+Local audit: `docker build --no-cache -t powerplant-evaluator-test-rebuild:probe docker/capsule-v1/`
+produced `sha256:cc4ae15db26972b3772f0c91d5c84498c80e5e7d58c9ba04c4fa2522d785445e`.
+The pinned constant is `sha256:f496aac93ff3459a5142f2e37aedb025c414f5a7244e299160ae82a3aa29ad48`.
+
+These differ because `docker/capsule-v1/Dockerfile` pins `FROM node:20-bookworm` by mutable
+tag only. The `node:20-bookworm` tag has moved since the capsule identity baseline was
+established. A clean build on the current base produces a different layer hash.
+
+**Public branch reconciliation:** Confirmed via `git ls-tree` and `git cat-file` that the
+pushed branch is not stale relative to prior documentation reports:
+- Root `BUILDLOG.md` is absent ✓
+- `docs/BUILD_LOG.md` is present and is the sole journal ✓
+- `README.md` contains `## Stage 2B L1 Accepted Safety Boundary` (narrowed heading) ✓
+- `LICENSE` and `SECURITY.md` are tracked ✓
+- No prior documentation correction commits were omitted from the push ✓
+
+**Actions taken in Gate 6B2C:**
+
+- **Actions upgrade:** `actions/checkout@v4` → `@v6`, `actions/setup-node@v4` → `@v6` in
+  `.github/workflows/ci.yml`. Addresses GitHub Node.js 20 action-runtime deprecation warnings.
+  The project Node version is unchanged (governed by `.node-version: 20`).
+- **No capsule constant changed:** `CAPSULE_V1_EXPECTED_IMAGE_ID` in `src/config/constants.ts`
+  and `docker/capsule-v1/build-manifest.json` remain unchanged. Updating the pinned identity
+  without a new proof report would weaken the capsule trust boundary.
+- **No P0-C/P0-E tests weakened or skipped.** Capsule tests remain in `npm test`.
+
+**Blocked state:** CI will continue to fail on P0-C/P0-E until a new reviewed capsule
+baseline is established. Required repair (not authorized in this gate):
+1. Pin `docker/capsule-v1/Dockerfile` base image by immutable digest.
+2. Clean build → record new reproducible image ID.
+3. Add CI step to build and verify capsule image before `npm test`.
+4. Update `CAPSULE_V1_EXPECTED_IMAGE_ID` and `build-manifest.json`.
+5. Run full P0-C/P0-E suite locally; record new proof report.
+6. Commit as reviewed capsule baseline with explicit authorization.
+
+**Validation:** `npm test` (1042/1042 local with image present; typecheck clean).
+No new credentials, runtime identifiers, or paths introduced. Worktree clean after commit.
+
+**Next authorized action:** Reviewed forward push of Gate 6B2C commits; post-push:
+initiate capsule trust-root baseline review with explicit authorization.
