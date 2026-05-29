@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { validateEnv } from '../src/config/env.js'
+import { resolveSprint4aPilotSourcePath } from '../src/config/constants.js'
 
 describe('validateEnv', () => {
   let savedEnv: NodeJS.ProcessEnv
@@ -40,5 +41,36 @@ describe('validateEnv', () => {
     process.env['ANTHROPIC_API_KEY'] = 'sk-test-key'
     const env = validateEnv()
     expect(env.NODE_ENV).toBe('development')
+  })
+})
+
+describe('resolveSprint4aPilotSourcePath', () => {
+  let savedPath: string | undefined
+
+  beforeEach(() => {
+    savedPath = process.env['SPRINT4A_PILOT_SOURCE_PATH']
+  })
+
+  afterEach(() => {
+    if (savedPath !== undefined) {
+      process.env['SPRINT4A_PILOT_SOURCE_PATH'] = savedPath
+    } else {
+      delete process.env['SPRINT4A_PILOT_SOURCE_PATH']
+    }
+  })
+
+  it('throws before any filesystem operation when env var is absent', () => {
+    delete process.env['SPRINT4A_PILOT_SOURCE_PATH']
+    expect(() => resolveSprint4aPilotSourcePath()).toThrow('SPRINT4A_PILOT_SOURCE_PATH is not set')
+  })
+
+  it('throws before any filesystem operation when env var is empty string', () => {
+    process.env['SPRINT4A_PILOT_SOURCE_PATH'] = ''
+    expect(() => resolveSprint4aPilotSourcePath()).toThrow('SPRINT4A_PILOT_SOURCE_PATH is not set')
+  })
+
+  it('returns the configured path when env var is set', () => {
+    process.env['SPRINT4A_PILOT_SOURCE_PATH'] = '/configured/pilot/path'
+    expect(resolveSprint4aPilotSourcePath()).toBe('/configured/pilot/path')
   })
 })

@@ -158,6 +158,36 @@ export const SPRINT4A_STATE_PATH = '.powerplant/state/sprint4a-pilot.json' as co
 export const SPRINT4A_RUNTIME_BASE = '/tmp/powerplant-sprint4a' as const
 export const SPRINT4A_REPORTS_DIR = '.powerplant/reports' as const
 export const SPRINT4A_EXECUTOR_IMAGE = 'powerplant-executor:sprint4a' as const
+/**
+ * Resolve the Sprint 4A pilot source path from the environment.
+ *
+ * Throws at call time if SPRINT4A_PILOT_SOURCE_PATH is not set, preventing the
+ * empty-string-to-CWD ambiguity that occurs when path.resolve('') returns the
+ * current working directory.
+ */
+export function resolveSprint4aPilotSourcePath(): string {
+  const val = process.env['SPRINT4A_PILOT_SOURCE_PATH']
+  if (!val) {
+    throw new Error(
+      'SPRINT4A_PILOT_SOURCE_PATH is not set. ' +
+      'Set this environment variable to the absolute path of the pilot project. ' +
+      'For local development, add it to your .env file.',
+    )
+  }
+  return val
+}
+
+/**
+ * Sprint 4A pilot source path resolved at module load time.
+ *
+ * For contexts that need the path before a session starts (e.g. CLI entry points,
+ * vitest test setup). Will be an empty string when the env var is absent —
+ * callers that need a guaranteed non-empty path should call
+ * resolveSprint4aPilotSourcePath() directly instead of reading this constant.
+ *
+ * @deprecated Prefer resolveSprint4aPilotSourcePath() for any code path that
+ * would pass this value to loadProjectContract or any filesystem operation.
+ */
 export const SPRINT4A_PILOT_SOURCE_PATH: string =
   process.env['SPRINT4A_PILOT_SOURCE_PATH'] ?? ''
 export const SPRINT4A_PILOT_PROJECT_ID = 'powerplant-pilot-status' as const

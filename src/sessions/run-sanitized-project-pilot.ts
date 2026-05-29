@@ -3,8 +3,8 @@ import fs from 'fs'
 import path from 'path'
 import {
   SPRINT4A_RUNTIME_BASE,
-  SPRINT4A_PILOT_SOURCE_PATH,
   SPRINT4A_FINAL_RESPONSE,
+  resolveSprint4aPilotSourcePath,
 } from '../config/constants.js'
 import { loadProjectContract } from '../projects/load-project-contract.js'
 import { buildPilotSnapshot } from '../projects/build-pilot-snapshot.js'
@@ -83,7 +83,7 @@ export async function runSanitizedProjectPilot(opts: {
   fs.mkdirSync(patchDir, { recursive: true })
 
   console.log('[sprint4a] building sanitized snapshot...')
-  const contract = loadProjectContract(SPRINT4A_PILOT_SOURCE_PATH)
+  const contract = loadProjectContract(resolveSprint4aPilotSourcePath())
   const snapshot = buildPilotSnapshot(contract, runDir)
   console.log('[sprint4a] baseline:', snapshot.baselinePath)
   console.log('[sprint4a] workspace:', snapshot.workspacePath)
@@ -129,7 +129,7 @@ export async function runSanitizedProjectPilot(opts: {
     timestamp: new Date().toISOString(),
     agentId: agent.id,
     environmentId: state.environmentId,
-    pilotSourcePath: SPRINT4A_PILOT_SOURCE_PATH,
+    pilotSourcePath: resolveSprint4aPilotSourcePath(),
     session: {
       sessionId: brokerResult.sessionId,
       builtinToolUseCount: brokerResult.builtinToolUseCount,

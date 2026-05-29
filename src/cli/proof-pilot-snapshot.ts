@@ -6,20 +6,21 @@ import fs from 'fs'
 import path from 'path'
 import { buildPilotSnapshot } from '../projects/build-pilot-snapshot.js'
 import { verifySourceUnchanged } from '../projects/verify-source-unchanged.js'
-import { SPRINT4A_PILOT_SOURCE_PATH, SPRINT4A_RUNTIME_BASE } from '../config/constants.js'
+import { resolveSprint4aPilotSourcePath, SPRINT4A_RUNTIME_BASE } from '../config/constants.js'
 import { SPRINT4A_PILOT_CONTRACT } from '../contracts/project-pilot-contract.js'
 
 console.log()
 console.log('=== proof:pilot:snapshot — Sanitized Snapshot Proof ===')
 console.log()
 
-const contract = { ...SPRINT4A_PILOT_CONTRACT, sourcePath: SPRINT4A_PILOT_SOURCE_PATH }
+const pilotSourcePath = resolveSprint4aPilotSourcePath()
+const contract = { ...SPRINT4A_PILOT_CONTRACT, sourcePath: pilotSourcePath }
 const runId = `snapshot-proof-${Date.now()}`
 const runDir = path.join(SPRINT4A_RUNTIME_BASE, runId)
 
 fs.mkdirSync(runDir, { recursive: true })
 
-console.log(`Source: ${SPRINT4A_PILOT_SOURCE_PATH}`)
+console.log(`Source: ${pilotSourcePath}`)
 console.log(`Run dir: ${runDir}`)
 console.log()
 
