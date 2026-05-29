@@ -42,7 +42,8 @@
     "pilot:create": "node --import=tsx src/cli/create-external-pilot.ts",
     "proof:pilot:snapshot": "node --import=tsx src/cli/proof-pilot-snapshot.ts",
     "smoke:pilot:project": "node --env-file=.env --import=tsx src/cli/sprint4a-sanitized-project-pilot.ts",
-    "test:live:sprint4a": "NODE_OPTIONS=--env-file=.env RUN_LIVE_SPRINT4A_TEST=1 vitest run tests/sprint4a-sanitized-project-pilot.live.test.ts"
+    "test:live:sprint4a": "NODE_OPTIONS=--env-file=.env RUN_LIVE_SPRINT4A_TEST=1 vitest run tests/sprint4a-sanitized-project-pilot.live.test.ts",
+    "stage2c:runner": "node --import=tsx src/cli/stage2c-run.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
