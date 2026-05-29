@@ -1256,3 +1256,54 @@ recorded in the repository. CI must pull that exact digest rather than rebuildin
 **Next authorized action:** Repository owner runs `.github/workflows/publish-capsule-v1.yml`
 on `feat/stage2b-preflight` via `workflow_dispatch`; records the output canonical
 reference; authorizes Phase B implementation.
+
+---
+
+## Gate 6B2C Phase B — Registry Digest Migration (2026-05-29)
+
+**Branch:** `feat/stage2b-preflight`
+**Ending commits:** `95658f5` (trust root), `c02b7e3` (CI), `docs commit TBD`
+
+**Objective:** Implement the approved immutable GHCR registry digest as the sole active
+capsule trust root used by production evaluation and CI proof execution.
+
+**Approved canonical reference (owner-supplied, workflow run 26662894783):**
+```
+ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e
+```
+
+**Artifact pull verification (local):**
+- `docker pull` succeeded; digest confirmed present in resolved `RepoDigests`.
+
+**Files changed:**
+
+- `src/config/constants.ts`: `CAPSULE_V1_EXPECTED_REPO_DIGEST` added as canonical reference;
+  `CAPSULE_DOCKER_IMAGE` now equals it; `CAPSULE_V1_EXPECTED_IMAGE_ID` marked deprecated/retired.
+- `src/preflight/capsule-evaluator.ts`: `getActualCapsuleImageId`/`.Id` verification retired;
+  replaced by `getCapsuleRepoDigests` + `RepoDigests.includes(expectedCanonicalReference)`;
+  receipt emits `capsuleCanonicalReference`, `capsuleResolvedRepoDigests`, `capsuleRegistryDigestVerified`;
+  `capsuleImageIdentityVerified` retained as alias for l1-runner compatibility.
+- `docker/capsule-v1/build-manifest.json`: `registryDigest`, `publishedTag`,
+  `publicationWorkflowRunId`, `trustRootMechanism` added; `imageId` field marked as retired
+  with migration note.
+- `tests/preflight/p0-e-capsule-trust-root.test.ts`: Section 1 and F16 migrated to
+  registry-digest semantics; uses `getCapsuleRepoDigests` and `CAPSULE_V1_EXPECTED_REPO_DIGEST`.
+- `tests/l1-runner.test.ts`: mock `CapsuleEvaluatorReceipt` updated to match new interface.
+- `.github/workflows/ci.yml`: build step removed; pull step authenticates to GHCR and
+  verifies `RepoDigests` before `npm test`; `permissions: packages: read` added.
+- `.github/workflows/publish-capsule-v1.yml`: docker actions upgraded to
+  Node.js 24-compatible versions (login@v4, setup-buildx@v4, build-push@v7).
+
+**Validation result:** 1042/1042 tests passing; `npx tsc --noEmit` clean.
+P0-E trust-root tests pass under registry-digest semantics.
+P0-C passes against the approved GHCR artifact.
+
+**Accepted claim:**
+
+> Gate 6B2C Phase B implemented locally: the capsule trust root now uses the approved
+> immutable GHCR registry digest, and ordinary CI is configured to pull and verify that
+> exact artifact before running P0-C/P0-E. Hosted CI confirmation remains pending until
+> the implementation is pushed and the workflow passes.
+
+**Next authorized action:** Push `feat/stage2b-preflight`; confirm hosted CI green.
+Gate 6B2C closes only after hosted P0-C/P0-E tests pass against the GHCR-sourced artifact.

@@ -307,10 +307,11 @@ Remaining actions required before formal release:
   historical runtime metadata exposure (live session IDs, agent IDs, environment IDs,
   operator-local paths in commits prior to Gate 6B1).
 
-#### Gate 6B2C — CI Capsule Provisioning Repair and Actions Upgrade — **OPEN**
+#### Gate 6B2C — CI Capsule Provisioning Repair and Actions Upgrade — **PHASE B IMPLEMENTED — HOSTED CI PENDING**
 
-**Status:** Base-image digest pinned; local proof re-run passed; hosted CI failed.
-Capsule trust-root migration to a canonical GHCR registry digest is required.
+**Status:** Phase B implemented locally. Capsule trust root migrated to the approved
+immutable GHCR registry digest. Ordinary CI now pulls the exact digest for proof execution.
+Hosted CI confirmation remains pending until the branch is pushed and the workflow passes.
 
 **Original CI failure root cause (pre-`da7297e`):** First hosted GitHub Actions run failed
 because no step built the capsule evaluator image before `npm test`. The evaluator correctly
@@ -356,13 +357,24 @@ portable cross-builder trust anchor.
 registry digest; have CI pull that exact digest for all subsequent runs. Manual publication
 workflow available at `.github/workflows/publish-capsule-v1.yml`.
 
-**Gate 6B2C closes only after:** The repository owner publishes the capsule image to GHCR,
-the immutable registry digest is committed to the repository, digest-based verification
-replaces local image `.Id` comparison in `capsule-evaluator.ts` and `ci.yml`, and hosted
-P0-C/P0-E tests pass against the GHCR-sourced artifact.
+**Phase B actions completed (commits `95658f5`, `c02b7e3`):**
 
-**Next authorized action**: Repository owner runs `publish-capsule-v1.yml` via
-`workflow_dispatch`; records the canonical reference; authorizes Phase B implementation.
+- Approved canonical reference committed:
+  `ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e`
+- `CAPSULE_V1_EXPECTED_REPO_DIGEST` added to `src/config/constants.ts`; local `.Id`
+  comparison retired.
+- `capsule-evaluator.ts`: `getCapsuleRepoDigests` + `RepoDigests.includes(...)` verification;
+  receipt emits `capsuleCanonicalReference`, `capsuleResolvedRepoDigests`, `capsuleRegistryDigestVerified`.
+- `ci.yml`: GHCR pull step replaces rebuild step; `permissions: packages: read` added;
+  `docker/login-action@v4` authenticates before pull.
+- `publish-capsule-v1.yml`: Docker actions upgraded to Node.js 24-compatible versions.
+- Local validation: 1042/1042 tests passing; typecheck clean; P0-C/P0-E pass against
+  GHCR artifact.
+
+**Gate 6B2C closes only after:** Hosted P0-C/P0-E tests pass against the GHCR-sourced
+artifact in a pushed GitHub Actions run.
+
+**Next authorized action**: Push `feat/stage2b-preflight`; confirm hosted CI green.
 
 ## Public Claim Boundary
 
