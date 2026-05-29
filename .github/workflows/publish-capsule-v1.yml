@@ -1,0 +1,110 @@
+# Manual workflow to publish the reviewed capsule evaluator image to GHCR.
+#
+# Run only through workflow_dispatch. Never triggered by push or PR.
+#
+# After this workflow completes, the repository owner must:
+#   1. Copy the canonical reference from the workflow summary.
+#   2. Record it in src/config/constants.ts as CAPSULE_V1_EXPECTED_REPO_DIGEST.
+#   3. Record it in docker/capsule-v1/build-manifest.json as registryDigest.
+#   4. Authorize Phase B implementation (digest verification in evaluator + CI).
+#
+# Do not commit a placeholder digest. Record only the digest produced by this run.
+# Gate 6B2C closes only after hosted P0-C/P0-E tests pass against this reference.
+
+name: Publish Capsule Evaluator Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag - must be explicitly versioned, not "latest" (e.g. node-test-js-v1.0.0)'
+        required: true
+        default: 'node-test-js-v1.0.0'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Build and publish capsule evaluator image to GHCR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate tag is not mutable
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ "$TAG" = "latest" ]; then
+            echo "ERROR: mutable tag 'latest' is not permitted for capsule publication"
+            exit 1
+          fi
+          echo "Tag accepted: $TAG"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push capsule evaluator image
+        id: build-push
+        uses: docker/build-push-action@v5
+        with:
+          context: docker/capsule-v1/
+          push: true
+          no-cache: true
+          tags: ghcr.io/${{ github.repository }}/capsule-v1:${{ inputs.tag }}
+
+      - name: Output canonical registry digest
+        run: |
+          DIGEST="${{ steps.build-push.outputs.digest }}"
+          CANONICAL="ghcr.io/${{ github.repository }}/capsule-v1@${DIGEST}"
+
+          echo "========================================================"
+          echo "CAPSULE IMAGE PUBLISHED"
+          echo ""
+          echo "Tag:              ghcr.io/${{ github.repository }}/capsule-v1:${{ inputs.tag }}"
+          echo "Registry digest:  ${DIGEST}"
+          echo "Canonical ref:    ${CANONICAL}"
+          echo "========================================================"
+          echo ""
+          echo "OWNER ACTION REQUIRED - record this canonical reference:"
+          echo ""
+          echo "  src/config/constants.ts"
+          echo "    CAPSULE_V1_EXPECTED_REPO_DIGEST = '${CANONICAL}'"
+          echo ""
+          echo "  docker/capsule-v1/build-manifest.json"
+          echo "    \"registryDigest\": \"${CANONICAL}\""
+          echo ""
+          echo "Then authorize Phase B: implement registry-digest verification in"
+          echo "  src/preflight/capsule-evaluator.ts and .github/workflows/ci.yml"
+          echo ""
+          echo "Gate 6B2C closes only after hosted P0-C/P0-E pass against this reference."
+
+          {
+            echo "## Capsule Image Published"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Tag | \`ghcr.io/${{ github.repository }}/capsule-v1:${{ inputs.tag }}\` |"
+            echo "| Registry digest | \`${DIGEST}\` |"
+            echo "| Canonical reference | \`${CANONICAL}\` |"
+            echo ""
+            echo "### Owner Action Required"
+            echo ""
+            echo "Record the canonical reference \`${CANONICAL}\` in:"
+            echo ""
+            echo "- \`src/config/constants.ts\` as \`CAPSULE_V1_EXPECTED_REPO_DIGEST\`"
+            echo "- \`docker/capsule-v1/build-manifest.json\` as \`registryDigest\`"
+            echo ""
+            echo "Then authorize Phase B implementation (digest verification in evaluator and CI)."
+            echo ""
+            echo "> Gate 6B2C closes only after hosted P0-C/P0-E tests pass against this reference."
+          } >> "$GITHUB_STEP_SUMMARY"
