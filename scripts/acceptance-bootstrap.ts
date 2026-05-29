@@ -13,8 +13,7 @@ import os from 'os'
 import path from 'path'
 import { ingestSkillPackage } from '../src/skills/skill-ingestion.js'
 import { validateSkill, promoteSkill } from '../src/skills/skill-lifecycle.js'
-
-export const L0_FIXTURE_RECEIPT_FILENAME = 'l0-fixture-receipt.json'
+import { L0_FIXTURE_RECEIPT_FILENAME } from '../src/acceptance/l0-fixture-receipt.js'
 
 const REQUIRED_LABEL_1 = '<!-- ISOLATED_ACCEPTANCE_GUIDANCE_FIXTURE -->'
 const REQUIRED_LABEL_2 = '<!-- ACCEPTANCE_STATE_ONLY_NOT_PRODUCTION_PROMOTION_EVIDENCE -->'

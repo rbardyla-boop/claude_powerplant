@@ -5,16 +5,10 @@
 //   - _runL1HarnessForTesting is absent from non-comment CLI code (test bypass excluded)
 //   - Only the production runL1Harness path is present in the CLI
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-
-// acceptance-bootstrap.ts has top-level script code (process.exit guard) that fires
-// when the module is imported without CLI args. Mock it to expose only the constant.
-vi.mock('../scripts/acceptance-bootstrap.js', () => ({
-  L0_FIXTURE_RECEIPT_FILENAME: 'l0-fixture-receipt.json',
-}))
 
 const { loadL0Receipt, L0_FIXTURE_RECEIPT_FILENAME } = await import('../src/cli/l1-harness-run.js')
 
