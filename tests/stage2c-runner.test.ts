@@ -15,6 +15,14 @@
 //   - Boundary enforcement blocks outside-workspace writes
 //   - Real repo manifest immutability preserved
 //   - Dry-run bypass: fakeAgent + dryRun still returns SKELETON_NO_AGENT_EXECUTION
+//
+// Step 3 proves denied tool evidence receipts and boundary hardening:
+//   - Denied writes emit a receipt (not null)
+//   - Denied tool event has allowed: false and a denialReason
+//   - Denied write creates no outside file
+//   - path.relative()-based check rejects traversal and same-prefix siblings
+//   - builtinToolUseCount is zero in both allowed and denied paths
+//   - repoManifestImmutable is honestly preserved in both paths
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
@@ -28,6 +36,7 @@ import type {
   Stage2cRunnerInternalOpts,
   Stage2cSkeletonReceipt,
   Stage2cFakeAgentReceipt,
+  Stage2cFakeAgentDeniedReceipt,
   FakeAgentToolEvent,
 } from '../scripts/stage2c-runner.js'
 
@@ -394,27 +403,186 @@ describe('fake-agent real repo immutability', () => {
   })
 })
 
-// ── Step 2: boundary enforcement ─────────────────────────────────────────────
+// ── Step 3: denied receipt shape ─────────────────────────────────────────────
 
-describe('fake-agent boundary enforcement', () => {
-  it('blocks outside-workspace write and returns RUNNER_BLOCKED', () => {
+describe('fake-agent denied receipt shape', () => {
+  it('denied outside-workspace write emits a receipt, not null', () => {
     const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
     const result = _runStage2cSkeletonForTesting(
       fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
     )
-    expect(result.outcome).toBe('RUNNER_BLOCKED')
-    expect(result.receipt).toBeNull()
-    expect(result.blockerReason).toContain('outside workspace')
+    expect(result.outcome).toBe('FAKE_AGENT_TOOL_DENIED_OUTSIDE_WORKSPACE')
+    expect(result.receipt).not.toBeNull()
+    expect(result.blockerReason).toBe('')
+  })
+
+  it('denied receipt has correct terminal outcome and agent fields', () => {
+    const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
+    const r = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
+    ).receipt as Stage2cFakeAgentDeniedReceipt
+    expect(r.terminalOutcome).toBe('FAKE_AGENT_TOOL_DENIED_OUTSIDE_WORKSPACE')
+    expect(r.agentExecutionAttempted).toBe(true)
+    expect(r.managedAgentTransport).toBe('deterministic_fake_agent')
+    expect(r.schemaVersion).toBe(1)
+    expect(r.stage).toBe('stage2c')
+    expect(r.step).toBe(2)
+  })
+
+  it('denied receipt builtinToolUseCount is zero', () => {
+    const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
+    const r = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
+    ).receipt as Stage2cFakeAgentDeniedReceipt
+    expect(r.builtinToolUseCount).toBe(0)
+  })
+
+  it('denied receipt is written to the run directory', () => {
+    const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
+    const r = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
+    ).receipt as Stage2cFakeAgentDeniedReceipt
+    const receiptFile = path.join(r.runDir, 'stage2c-receipt.json')
+    expect(fs.existsSync(receiptFile)).toBe(true)
+    const persisted = JSON.parse(fs.readFileSync(receiptFile, 'utf-8')) as Stage2cFakeAgentDeniedReceipt
+    expect(persisted.terminalOutcome).toBe('FAKE_AGENT_TOOL_DENIED_OUTSIDE_WORKSPACE')
+  })
+})
+
+// ── Step 3: denied tool event ─────────────────────────────────────────────────
+
+describe('fake-agent denied tool event', () => {
+  it('denied tool event has allowed: false', () => {
+    const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
+    const r = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
+    ).receipt as Stage2cFakeAgentDeniedReceipt
+    const ev = r.toolEvents[0] as FakeAgentToolEvent
+    expect(ev.allowed).toBe(false)
+  })
+
+  it('denied tool event has a non-empty denialReason', () => {
+    const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
+    const r = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
+    ).receipt as Stage2cFakeAgentDeniedReceipt
+    const ev = r.toolEvents[0] as FakeAgentToolEvent
+    expect(typeof ev.denialReason).toBe('string')
+    expect(ev.denialReason!.length).toBeGreaterThan(0)
+  })
+
+  it('denied tool event denialReason is TARGET_OUTSIDE_WORKSPACE', () => {
+    const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
+    const r = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
+    ).receipt as Stage2cFakeAgentDeniedReceipt
+    expect(r.toolEvents[0]!.denialReason).toBe('TARGET_OUTSIDE_WORKSPACE')
+  })
+
+  it('denied tool event bytesWritten is zero', () => {
+    const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
+    const r = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
+    ).receipt as Stage2cFakeAgentDeniedReceipt
+    expect(r.toolEvents[0]!.bytesWritten).toBe(0)
+  })
+
+  it('denied tool event tool is WRITE_FILE', () => {
+    const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
+    const r = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
+    ).receipt as Stage2cFakeAgentDeniedReceipt
+    expect(r.toolEvents[0]!.tool).toBe('WRITE_FILE')
+  })
+})
+
+// ── Step 3: boundary hardening ────────────────────────────────────────────────
+
+describe('fake-agent boundary hardening', () => {
+  it('denied write creates no outside file', () => {
+    const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
+    _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
+    )
     expect(fs.existsSync(outsidePath)).toBe(false)
   })
 
   it('blocks path-traversal write (../.. escape)', () => {
+    // path.resolve normalizes '..' before path.relative sees it,
+    // so '/workspace/../outside' → '/outside' which is outside workspace.
     const traversalPath = path.join(tmpBase, '..', 'traversal-escape.txt')
     const result = _runStage2cSkeletonForTesting(
       fakeAgentOpts({ _fakeAgentTargetPathForTesting: traversalPath }),
     )
-    expect(result.outcome).toBe('RUNNER_BLOCKED')
-    expect(result.receipt).toBeNull()
+    expect(result.outcome).toBe('FAKE_AGENT_TOOL_DENIED_OUTSIDE_WORKSPACE')
+    expect(result.receipt).not.toBeNull()
+    expect(fs.existsSync(path.resolve(traversalPath))).toBe(false)
+  })
+
+  it('blocks same-prefix sibling path (workspace-evil attack)', () => {
+    // '/tmp/workspaceXXX-evil/foo' is a sibling, not a child.
+    // path.relative('/tmp/workspaceXXX', '/tmp/workspaceXXX-evil/foo') = '../workspaceXXX-evil/foo'
+    // which starts with '..' — caught by the boundary check.
+    const siblingDir = tmpBase + '-evil'
+    const siblingPath = path.join(siblingDir, 'attack.txt')
+    const result = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: siblingPath }),
+    )
+    expect(result.outcome).toBe('FAKE_AGENT_TOOL_DENIED_OUTSIDE_WORKSPACE')
+    expect(result.receipt).not.toBeNull()
+    expect(fs.existsSync(siblingPath)).toBe(false)
+  })
+
+  it('allowed write still succeeds after hardening', () => {
+    const result = _runStage2cSkeletonForTesting(fakeAgentOpts())
+    expect(result.outcome).toBe('FAKE_AGENT_WORKSPACE_MUTATION_RECORDED')
+    expect(result.receipt).not.toBeNull()
+  })
+
+  it('allowed tool event has no denialReason', () => {
+    const r = _runStage2cSkeletonForTesting(fakeAgentOpts()).receipt as Stage2cFakeAgentReceipt
+    expect(r.toolEvents[0]!.denialReason).toBeUndefined()
+  })
+})
+
+// ── Step 3: repo immutability in denied path ──────────────────────────────────
+
+describe('fake-agent denied path repo immutability', () => {
+  it('repoManifestImmutable is true when repo has files and denied write cannot mutate it', () => {
+    fs.writeFileSync(path.join(tmpRepo, 'example.ts'), 'export const x = 1\n')
+    const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
+    const r = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
+    ).receipt as Stage2cFakeAgentDeniedReceipt
+    expect(r.repoManifestImmutable === true || r.repoManifestImmutable === 'unavailable').toBe(true)
+  })
+
+  it('repoManifestHashBefore equals repoManifestHashAfter in denied path', () => {
+    fs.writeFileSync(path.join(tmpRepo, 'example.ts'), 'export const x = 1\n')
+    const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
+    const r = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
+    ).receipt as Stage2cFakeAgentDeniedReceipt
+    expect(r.repoManifestHashBefore).toBe(r.repoManifestHashAfter)
+  })
+})
+
+// ── Step 3: builtinToolUseCount zero in both paths ────────────────────────────
+
+describe('builtinToolUseCount invariant', () => {
+  it.each([
+    ['allowed fake-agent write', fakeAgentOpts()],
+  ] as Array<[string, Stage2cRunnerInternalOpts]>)('is zero for %s', (_label, opts) => {
+    const r = _runStage2cSkeletonForTesting(opts).receipt as Stage2cFakeAgentReceipt
+    expect(r.builtinToolUseCount).toBe(0)
+  })
+
+  it('is zero for denied fake-agent write', () => {
+    const outsidePath = path.join(os.tmpdir(), `evil-${Date.now()}.txt`)
+    const r = _runStage2cSkeletonForTesting(
+      fakeAgentOpts({ _fakeAgentTargetPathForTesting: outsidePath }),
+    ).receipt as Stage2cFakeAgentDeniedReceipt
+    expect(r.builtinToolUseCount).toBe(0)
   })
 })
 
