@@ -110,36 +110,70 @@ Qualifying condition: the accepted Case B trust assumption must hold — the ope
 
 Validated: `1039/1039` tests passing across 57 files, `npx tsc --noEmit` clean.
 
-### Gate 4 — One Bounded Live L1 Execution
+### Gate 4 — One Bounded Live L1 Execution — **CLOSED** (one bounded live run accepted under trusted-directory assumption)
 
-Allowed only after explicit authorization.
+Status: `CLOSED — one bounded live L1 execution accepted under trusted-directory assumption`
 
-Required evidence:
+Final verdict: `L1_LIVE_ACCEPTED_UNDER_TRUSTED_DIRECTORY_ASSUMPTION`
 
-* Immutable L0 fixture binding verified.
-* Strict Phase A-before-broker timestamp evidence.
-* JSONL record ordering.
-* Tool-channel confinement.
-* Sanitized workspace containment.
-* Real project immutability.
-* Oracle isolation.
-* Honest termination evidence.
-* Sanitized evidence bundle.
+One live L1 run was executed. No retry was performed. No source, test, or documentation
+files were modified during or after the run. The post-run worktree was clean.
 
-Allowed verdicts:
+**Trusted-directory qualification (exact language):**
 
-* `L1_LIVE_ACCEPTED`
-* `L1_LIVE_FAILED_WITH_TRUTHFUL_EVIDENCE`
-* `L1_LIVE_EVIDENCE_INCOMPLETE_BLOCKED`
+> Stage 2B L1 completed one bounded live acceptance run under a documented trusted-directory
+> assumption. The run verified consistency between the L0-generated receipt and isolated promoted
+> registry during an operator-controlled bootstrap-to-L1 handoff.
+>
+> This acceptance does not claim cryptographic resistance to pre-run receipt-and-registry
+> co-substitution by an actor with write access to the operator-controlled acceptance directory.
 
-### Gate 5 — Stage 2B Closeout Documentation
+**Sanitized evidence summary:**
 
-Required outcomes:
+| Evidence Item | Result |
+|---|---|
+| Acceptance directory control | Fresh operator-controlled directory; owner-only permissions confirmed |
+| L0 bootstrap | Completed successfully once |
+| Trusted-directory handoff | Receipt and registry hashes unchanged between bootstrap and L1 invocation |
+| Live invocation count | Exactly one; no retry |
+| External session | Entered; identifier redacted |
+| Built-in tool evidence | `builtinToolUseCount === 0` |
+| Temporal proof | `17:28:43.606Z < 17:28:43.620Z` |
+| Audit ordering | Phase A line `0` before Phase B line `1` |
+| Candidate containment | `sanitizedWorkspaceUsed: true`; `originalProjectMounted: false` |
+| Real-project immutability | `manifestUnchanged: true` |
+| Oracle isolation | Network disabled; read-only rootfs; capabilities dropped; `PASS (4/4)` |
+| Repository integrity after run | Clean worktree; no source/test/doc changes |
+| Secret hygiene | No credentials committed; external session identifier redacted |
 
-* README truthfully states proven and unproven surfaces.
-* Sanitized Stage 2B acceptance report is added.
-* Threat model and security policy exist.
-* Runtime artifacts and credentials are excluded from version control.
+Raw runtime evidence (acceptance directory contents, unredacted receipts, JSONL audit log)
+remains outside version control, pending separate sanitation and disposition review.
+
+The sanitized acceptance report is committed at:
+`docs/acceptance/STAGE_2B_L1_LIVE_ACCEPTANCE_REPORT.md`
+
+GitHub publication remains blocked pending Gate 6 security, CI, and public-claim review.
+
+BUILDLOG.md remains authorized and non-normative: if it conflicts with this ledger, the
+acceptance plan, committed validation tests, or the final acceptance receipt, those
+authoritative artifacts control.
+
+### Gate 5 — Stage 2B Closeout Documentation — **IN PROGRESS**
+
+Completed in this commit:
+
+* Sanitized Stage 2B L1 acceptance report added at
+  `docs/acceptance/STAGE_2B_L1_LIVE_ACCEPTANCE_REPORT.md`.
+* Gate 4 section in this ledger closed with exact trust-boundary language and sanitized
+  evidence table.
+
+Remaining before Gate 5 can be closed:
+
+* README truthfully states proven and unproven surfaces (deferred to Gate 6 to avoid premature
+  publication language).
+* Threat model and security policy reviewed for accuracy.
+* Confirmation that runtime artifacts and credentials are excluded from version control
+  (pre-existing `.gitignore` covers runtime state; Gate 6 will do full history scan).
 
 ### Gate 6 — GitHub Release Readiness
 
