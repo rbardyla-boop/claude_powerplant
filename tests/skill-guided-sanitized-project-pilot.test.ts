@@ -1417,3 +1417,46 @@ test('T38 — Phase A record has recordPosition documenting contract-loaded-befo
   const phaseB = records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_B)
   expect(phaseA!['invocationId']).toBe(phaseB!['invocationId'])
 })
+
+// ── T39: Phase B production writer emits sessionStartedAt ────────────────────
+// Proves the production writer (run-skill-guided-sanitized-project-pilot.ts)
+// actually emits sessionStartedAt in the Phase B record.
+// The L1 harness validates this field against Phase A invocationTimestamp, so
+// the production writer must emit it or the harness will reject the run.
+
+test('T39 — production writer emits sessionStartedAt in Phase B — present and parseable as ISO 8601', async () => {
+  const { contentHash } = await makePromotedSkill('test-skill-t39')
+  vi.mocked(loadProjectContract).mockReturnValue(makeFakeContract() as never)
+  vi.mocked(buildPilotSnapshot).mockReturnValue(makeFakeSnapshot(os.tmpdir()) as never)
+  vi.mocked(verifySourceUnchanged).mockReturnValue({ sourceUnmodified: true, changedFiles: [], missingFiles: [], newFiles: [] })
+  vi.mocked(runProjectPilotBrokerSession).mockResolvedValue(makeBrokerResult() as never)
+
+  await runSkillGuidedSanitizedProjectPilot({
+    skillRequest: { skillId: 'test-skill-t39', expectedHash: contentHash },
+    pilotSourcePath: '/fake/path',
+    controlClient: {} as never,
+    state: makeFakeState() as never,
+  })
+
+  const records = readAuditLog()
+  const phaseA = records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_A)
+  const phaseB = records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_B)
+
+  expect(phaseB).toBeDefined()
+
+  // sessionStartedAt must be present and non-empty
+  const sessionStartedAt = phaseB!['sessionStartedAt']
+  expect(typeof sessionStartedAt).toBe('string')
+  expect((sessionStartedAt as string).length).toBeGreaterThan(0)
+
+  // Must be parseable as ISO 8601
+  const parsed = Date.parse(sessionStartedAt as string)
+  expect(isNaN(parsed)).toBe(false)
+
+  // Must follow Phase A invocationTimestamp (broker invocation starts after Phase A is written)
+  const invocationTimestamp = phaseA!['invocationTimestamp']
+  expect(typeof invocationTimestamp).toBe('string')
+  const tsA = Date.parse(invocationTimestamp as string)
+  expect(isNaN(tsA)).toBe(false)
+  expect(parsed).toBeGreaterThanOrEqual(tsA)
+})
