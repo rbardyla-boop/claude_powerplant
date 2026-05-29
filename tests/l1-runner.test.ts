@@ -201,9 +201,10 @@ function makeHappyCapsuleReceipt(overrides: Partial<CapsuleEvaluatorReceipt> = {
     workspacePayloadHash: EMPTY_PAYLOAD_HASH,
     evaluatorProfile: 'capsule-v1-node-test-js',
     controlPolicyVersion: 'stage2b-capsule-v1',
-    capsuleImageReference: 'powerplant-evaluator:node-test-js-v1',
-    capsuleImageIdExpected: 'sha256:expected',
-    capsuleImageIdActual: 'sha256:expected',
+    capsuleImageReference: 'ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e',
+    capsuleCanonicalReference: 'ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e',
+    capsuleResolvedRepoDigests: ['ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e'],
+    capsuleRegistryDigestVerified: true,
     capsuleImageIdentityVerified: true,
     candidateCodeExecutedInCapsule: true,
     candidateCodeExecutedOnHost: false,
@@ -226,7 +227,7 @@ function makeHappyCapsuleReceipt(overrides: Partial<CapsuleEvaluatorReceipt> = {
     verifiedControls: ['timeout_enforcement', 'output_cap', 'network_isolation', 'full_filesystem_isolation', 'workspace_readonly', 'env_scrubbing', 'readonly_rootfs', 'cap_drop_all', 'pids_limit', 'image_identity_verified', 'trusted_result_channel'],
     unverifiedControls: [],
     capsuleConfig: {
-      image: 'powerplant-evaluator:node-test-js-v1',
+      image: 'ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e',
       networkMode: 'none',
       readOnly: true,
       memoryLimit: '256m',
@@ -871,7 +872,8 @@ describe('Oracle capsule evaluation checks', () => {
     const badImageOracle: L1OracleEvaluator = async () =>
       makeHappyCapsuleReceipt({
         capsuleImageIdentityVerified: false,
-        capsuleImageIdActual: 'sha256:unexpected-other',
+        capsuleRegistryDigestVerified: false,
+        capsuleResolvedRepoDigests: ['ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:' + '0'.repeat(64)],
       })
     const result = await _runL1HarnessForTesting(baseOpts(auditPath, { oracleEvaluator: badImageOracle }))
     expect(result.verdict).toBe('L1_HARNESS_FAILED')

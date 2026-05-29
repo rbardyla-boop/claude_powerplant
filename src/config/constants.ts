@@ -225,11 +225,17 @@ export const STAGE2B_PREFLIGHT_CONTROL_POLICY_VERSION = 'stage2b-preflight-v1' a
 export const STAGE2B_TOOL_POLICY_VERSION = 'stage2b-tool-policy-v1' as const
 
 // Stage 2B Preflight — capsule-v1 evaluator profile
-// Image identity is content-pinned: the evaluator verifies the actual image ID against
-// CAPSULE_V1_EXPECTED_IMAGE_ID before any candidate code runs. If the tag is reused with
-// a different image, execution is refused. See docker/capsule-v1/build-manifest.json.
+// Trust root (Phase B / Gate 6B2C-R): the evaluator verifies the capsule image by its
+// immutable GHCR registry digest. CI pulls this exact digest; it never rebuilds the image.
+// See docker/capsule-v1/build-manifest.json and docs/BUILD_LOG.md Gate 6B2C.
 export const STAGE2B_CAPSULE_EVALUATOR_PROFILE_ID = 'capsule-v1' as const
-export const CAPSULE_DOCKER_IMAGE = 'powerplant-evaluator:node-test-js-v1' as const
+export const CAPSULE_V1_EXPECTED_REPO_DIGEST =
+  'ghcr.io/rbardyla-boop/claude_powerplant/capsule-v1@sha256:b9b3f12dada01a7b95d58688ddd1185df2c8500f39b15133c45d94fe7eec506e' as const
+// CAPSULE_DOCKER_IMAGE is the canonical immutable reference used for both execution and
+// verification. The mutable tag (powerplant-evaluator:node-test-js-v1) is retired.
+export const CAPSULE_DOCKER_IMAGE = CAPSULE_V1_EXPECTED_REPO_DIGEST
+/** @deprecated Retired by Gate 6B2C Phase B. Local Docker image .Id is not portable across
+ * independent builders. Active capsule trust root is CAPSULE_V1_EXPECTED_REPO_DIGEST. */
 export const CAPSULE_V1_EXPECTED_IMAGE_ID = 'sha256:e76106374cf197074f855721173fd0c0b77265ec2c7a5372a9f39fa9b48ef0bc' as const
 export const CAPSULE_ORACLE_MOUNT_TARGET = '/oracle' as const
 export const CAPSULE_WORKSPACE_MOUNT_TARGET = '/workspace' as const
