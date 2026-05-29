@@ -32,6 +32,7 @@ import path from 'path'
 import os from 'os'
 import crypto from 'crypto'
 import { fileURLToPath } from 'url'
+import { performance } from 'perf_hooks'
 
 // Real skill machinery — runs against temp POWERPLANT_HOME
 import { ingestSkillPackage } from '../src/skills/skill-ingestion.js'
@@ -1462,13 +1463,13 @@ test('T39 — production writer emits sessionStartedAt in Phase B — present an
   expect(parsed).toBeGreaterThan(tsA)
 })
 
-// ── T40: Same-millisecond clock freeze — spin-loop repair guarantees strict ordering ─
+// ── T40: Same-millisecond clock freeze — bounded yielding repair guarantees strict ordering ─
 //
 // Reproduces the condition where Date.now() returns the same value as the parsed
 // Phase A invocationTimestamp for several iterations (simulating a frozen-clock
-// same-millisecond scenario). Proves the spin-loop repair exits only when the
-// real clock has advanced, and that Phase B sessionStartedAt is strictly after
-// Phase A invocationTimestamp.
+// same-millisecond scenario). Proves the bounded yielding repair exits only when
+// the real clock has advanced, and that Phase B sessionStartedAt is strictly
+// after Phase A invocationTimestamp.
 
 test('T40 — spin-loop repair resolves same-millisecond clock freeze: sessionStartedAt strictly after invocationTimestamp', async () => {
   const { contentHash } = await makePromotedSkill('test-skill-t40')
@@ -1512,6 +1513,97 @@ test('T40 — spin-loop repair resolves same-millisecond clock freeze: sessionSt
   expect(isNaN(tsA)).toBe(false)
   expect(isNaN(tsB)).toBe(false)
 
-  // Spin-loop repair must ensure strict ordering even when the clock was frozen
+  // Bounded yielding repair must ensure strict ordering even when the clock was frozen
   expect(tsB).toBeGreaterThan(tsA)
+})
+
+// ── T41: Frozen wall clock — monotonic timeout fires; broker never called ─────
+//
+// Date.now() never advances past Phase A.  performance.now() is mocked to
+// simulate the monotonic budget expiring immediately on the first elapsed check.
+// Proves: the production writer throws SESSION_START_TIMESTAMP_TIMEOUT before
+// the broker mock is called, and no Phase B record with a false sessionStartedAt
+// is written.
+
+test('T41 — frozen wall clock: monotonic budget exhausted before broker; no Phase B written', async () => {
+  const { contentHash } = await makePromotedSkill('test-skill-t41')
+  vi.mocked(loadProjectContract).mockReturnValue(makeFakeContract() as never)
+  vi.mocked(buildPilotSnapshot).mockReturnValue(makeFakeSnapshot(os.tmpdir()) as never)
+  vi.mocked(verifySourceUnchanged).mockReturnValue({ sourceUnmodified: true, changedFiles: [], missingFiles: [], newFiles: [] })
+
+  // Date.now() frozen 1 second before current real time — always <= tsA
+  const frozenTime = Date.now() - 1000
+  const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(frozenTime)
+
+  // performance.now(): first call (budgetStart) returns 0; second call (elapsed check)
+  // returns a value that exceeds the timeout budget, causing immediate expiry.
+  let perfCallCount = 0
+  const perfSpy = vi.spyOn(performance, 'now').mockImplementation(() => {
+    perfCallCount++
+    return perfCallCount === 1 ? 0 : 1_000_000
+  })
+
+  try {
+    await expect(
+      runSkillGuidedSanitizedProjectPilot({
+        skillRequest: { skillId: 'test-skill-t41', expectedHash: contentHash },
+        pilotSourcePath: '/fake/path',
+        controlClient: {} as never,
+        state: makeFakeState() as never,
+      })
+    ).rejects.toMatchObject({ code: 'SESSION_START_TIMESTAMP_TIMEOUT' })
+  } finally {
+    nowSpy.mockRestore()
+    perfSpy.mockRestore()
+  }
+
+  // Broker must not have been called — no broker invocation before evidence
+  expect(vi.mocked(runProjectPilotBrokerSession)).not.toHaveBeenCalled()
+
+  // Phase A was written (pre-temporal-capture step) but no Phase B record exists
+  const records = readAuditLog()
+  expect(records.some(r => r['phase'] === SKILL_INVOCATION_PHASE_A)).toBe(true)
+  expect(records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_B)).toBeUndefined()
+})
+
+// ── T42: Wall clock regression — monotonic timeout still terminates; broker not called ─
+//
+// Date.now() returns a value explicitly below the real current time (regression).
+// performance.now() is mocked to expire the budget, proving the monotonic timeout
+// is independent of wall-clock direction.
+
+test('T42 — wall clock regression: monotonic budget terminates wait; broker not called', async () => {
+  const { contentHash } = await makePromotedSkill('test-skill-t42')
+  vi.mocked(loadProjectContract).mockReturnValue(makeFakeContract() as never)
+  vi.mocked(buildPilotSnapshot).mockReturnValue(makeFakeSnapshot(os.tmpdir()) as never)
+  vi.mocked(verifySourceUnchanged).mockReturnValue({ sourceUnmodified: true, changedFiles: [], missingFiles: [], newFiles: [] })
+
+  // Date.now() returns a value 5 seconds in the past — regressed behind invocationTimestamp
+  const regressedTime = Date.now() - 5000
+  const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(regressedTime)
+
+  let perfCallCount = 0
+  const perfSpy = vi.spyOn(performance, 'now').mockImplementation(() => {
+    perfCallCount++
+    return perfCallCount === 1 ? 0 : 1_000_000
+  })
+
+  try {
+    await expect(
+      runSkillGuidedSanitizedProjectPilot({
+        skillRequest: { skillId: 'test-skill-t42', expectedHash: contentHash },
+        pilotSourcePath: '/fake/path',
+        controlClient: {} as never,
+        state: makeFakeState() as never,
+      })
+    ).rejects.toMatchObject({ code: 'SESSION_START_TIMESTAMP_TIMEOUT' })
+  } finally {
+    nowSpy.mockRestore()
+    perfSpy.mockRestore()
+  }
+
+  expect(vi.mocked(runProjectPilotBrokerSession)).not.toHaveBeenCalled()
+
+  const records = readAuditLog()
+  expect(records.find(r => r['phase'] === SKILL_INVOCATION_PHASE_B)).toBeUndefined()
 })

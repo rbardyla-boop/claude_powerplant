@@ -42,6 +42,7 @@
 
 import crypto from 'crypto'
 import { randomUUID } from 'crypto'
+import { performance } from 'perf_hooks'
 import { listSkills, computeSkillContentHash } from '../skills/skill-lifecycle.js'
 import { renderPromptEnvelope, SKILL_AUTHORITY_DISCLAIMER } from '../skills/skill-envelope.js'
 import { getCandidatePath } from '../skills/skill-paths.js'
@@ -88,7 +89,8 @@ export class SkillGuidedInvocationError extends Error {
       | 'DISCLAIMER_MISSING'
       | 'ENVELOPE_HASH_FAILED'
       | 'PHASE_A_AUDIT_FAILED'
-      | 'AGENT_MESSAGE_COMPOSITION_FAILED',
+      | 'AGENT_MESSAGE_COMPOSITION_FAILED'
+      | 'SESSION_START_TIMESTAMP_TIMEOUT',
     message: string
   ) {
     super(message)
@@ -159,6 +161,41 @@ const CAPSULE_DECLARED_POLICY: CapsuleIsolationRecord = {
     networkDisabledObserved: 'unknown',
     noCredentialsMountedObserved: 'unknown',
   },
+}
+
+// ── Bounded session-start timestamp capture ───────────────────────────────────
+//
+// The strict temporal invariant requires:
+//   Date.parse(phaseB.sessionStartedAt) > Date.parse(phaseA.invocationTimestamp)
+//
+// In fast execution both may land on the same millisecond.  The repair yields
+// briefly between observations and uses a monotonic budget so that a frozen or
+// regressed wall clock cannot cause an unbounded spin.
+//
+// Wall-clock truth (Date.now) and timeout measurement (performance.now) are
+// deliberately separate: a frozen wall clock cannot defeat the timeout, and a
+// frozen monotonic clock cannot forge a false sessionStartedAt.
+
+const SESSION_START_TIMEOUT_BUDGET_MS = 500
+const SESSION_START_YIELD_INTERVAL_MS = 1
+
+async function awaitStrictlyAfterTimestamp(invocationTimestamp: string): Promise<string> {
+  const tsA = Date.parse(invocationTimestamp)
+  const budgetStart = performance.now()
+  while (true) {
+    const observedMs = Date.now()
+    if (observedMs > tsA) {
+      return new Date(observedMs).toISOString()
+    }
+    const elapsed = performance.now() - budgetStart
+    if (elapsed >= SESSION_START_TIMEOUT_BUDGET_MS) {
+      throw new SkillGuidedInvocationError(
+        'SESSION_START_TIMESTAMP_TIMEOUT',
+        `sessionStartedAt could not be observed strictly after invocationTimestamp within ${SESSION_START_TIMEOUT_BUDGET_MS}ms: wall clock did not advance past Phase A timestamp`
+      )
+    }
+    await new Promise<void>(resolve => setTimeout(resolve, SESSION_START_YIELD_INTERVAL_MS))
+  }
 }
 
 // ── Budget-exhaustion error detection ────────────────────────────────────────
@@ -402,15 +439,11 @@ export async function runSkillGuidedSanitizedProjectPilot(opts: {
   let budgetExhausted = false
 
   // Guarantee sessionStartedAt is strictly after invocationTimestamp.
-  // The harness enforces Date.parse(phaseA.invocationTimestamp) < Date.parse(phaseB.sessionStartedAt).
-  // In fast execution both could land on the same millisecond, which would fail that invariant.
-  // Spin on the real wall clock until it strictly advances past the Phase A timestamp.
-  const tsA = Date.parse(invocationTimestamp)
-  let sessionStartedAtMs = Date.now()
-  while (sessionStartedAtMs <= tsA) {
-    sessionStartedAtMs = Date.now()
-  }
-  const sessionStartedAt = new Date(sessionStartedAtMs).toISOString()
+  // Uses a bounded yielding helper: wall-clock truth from Date.now(),
+  // timeout measurement from monotonic performance.now().
+  // Throws SESSION_START_TIMESTAMP_TIMEOUT before broker invocation if the
+  // budget is exhausted, so a frozen wall clock fails closed rather than hangs.
+  const sessionStartedAt = await awaitStrictlyAfterTimestamp(invocationTimestamp)
 
   try {
     brokerResult = await runProjectPilotBrokerSession({
