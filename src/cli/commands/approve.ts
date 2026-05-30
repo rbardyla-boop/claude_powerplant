@@ -11,6 +11,8 @@ import {
   type SourceManifest,
   type SessionSummary,
 } from '../../runs/apply-patch.js'
+import { loadSession, extendSession } from '../../sessions/session-chain.js'
+import { computeExtendedWorkspaceManifestHash } from '../../sessions/session-workspace.js'
 
 const REQUIRED_ARTIFACTS = ['PATCH.diff', 'SOURCE_MANIFEST.json', 'TASK.md', 'SESSION_SUMMARY.json'] as const
 
@@ -113,10 +115,18 @@ function tryCreatePr(
   }
 }
 
+function parseExtendSession(args: string[]): string | null {
+  const idx = args.indexOf('--extend-session')
+  if (idx === -1) return null
+  const val = args[idx + 1]
+  return val !== undefined && !val.startsWith('-') ? val : null
+}
+
 export async function cmdApprove(args: string[]): Promise<void> {
   const runId = args.find(a => !a.startsWith('-'))
   const dryRun = args.includes('--dry-run')
   const withPr = args.includes('--pr')
+  const extendSessionId = parseExtendSession(args)
 
   if (!runId?.trim()) {
     console.error('Error: run ID must not be empty.')
@@ -265,5 +275,59 @@ export async function cmdApprove(args: string[]): Promise<void> {
   // 14. Optional PR
   if (withPr) {
     tryCreatePr(taskSubject, runId, evidenceHash, runDir)
+  }
+
+  // 15. Optional session extension
+  if (extendSessionId) {
+    // Refuse to extend with a failed run
+    if (sessionSummary?.passed !== true) {
+      console.error(
+        `\nError: Cannot extend session — run verification did not pass ` +
+        `(status: ${verificationStatus}). Session extension refused.`,
+      )
+      process.exit(1)
+    }
+
+    let session
+    try {
+      session = loadSession(extendSessionId)
+    } catch (err) {
+      console.error(`\nError: Cannot extend session — ${String(err).replace('Error: ', '')}`)
+      process.exit(1)
+    }
+
+    if (session.status === 'closed') {
+      console.error(`\nError: Session ${extendSessionId} is closed. Extension refused.`)
+      process.exit(1)
+    }
+
+    if (session.projectId !== manifest.projectId) {
+      console.error(
+        `\nError: Session project ID (${session.projectId}) does not match ` +
+        `run project ID (${manifest.projectId}). Extension refused.`,
+      )
+      process.exit(1)
+    }
+
+    let workspaceManifestHash: string
+    try {
+      workspaceManifestHash = computeExtendedWorkspaceManifestHash(session, patchPath)
+    } catch (err) {
+      console.error(`\nError computing session workspace hash: ${String(err).replace('Error: ', '')}`)
+      process.exit(1)
+    }
+
+    extendSession(extendSessionId, {
+      runId,
+      task: taskSubject,
+      evidenceHash,
+      appliedAt: new Date().toISOString(),
+      workspaceManifestHash,
+    })
+
+    const newChainLen = session.chainLinks.length + 1
+    console.log(`\nSession extended: ${extendSessionId}`)
+    console.log(`  Chain length:   ${newChainLen}`)
+    console.log(`  Workspace hash: ${workspaceManifestHash}`)
   }
 }

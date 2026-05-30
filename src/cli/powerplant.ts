@@ -10,6 +10,7 @@ import { cmdVerify } from './commands/verify.js'
 import { cmdDoctor } from './commands/doctor.js'
 import { cmdSetup } from './commands/setup.js'
 import { cmdSkill } from './commands/skill.js'
+import { cmdSession } from './commands/session.js'
 import { loadPowerplantEnv } from '../config/powerplant-home.js'
 
 // Resolve the Powerplant package root from this file's location so that
@@ -29,9 +30,10 @@ function printUsage(): void {
   console.log('  powerplant inspect <project-path>')
   console.log('  powerplant verify  <project-path>')
   console.log('  powerplant doctor  [project-path]')
-  console.log('  powerplant run     [--yes] <project-path> "<task>"')
+  console.log('  powerplant run     [--yes] [--session <id>] <project-path> "<task>"')
   console.log('  powerplant review  <run-id> [--json] [--diff]')
-  console.log('  powerplant approve <run-id> [--dry-run] [--pr]')
+  console.log('  powerplant approve <run-id> [--dry-run] [--pr] [--extend-session <id>]')
+  console.log('  powerplant session <subcommand>')
   console.log('  powerplant skill   <subcommand>')
   console.log()
   console.log('Commands:')
@@ -40,9 +42,10 @@ function printUsage(): void {
   console.log('  inspect  Show what Claude would see/modify without starting a session')
   console.log('  verify   Run approved checks in an isolated workspace (no agent, no network)')
   console.log('  doctor   Show runtime status and configuration (no API call)')
-  console.log('  run      Run a task on a sanitized copy and produce a patch')
+  console.log('  run      Run a task on a sanitized copy (or session workspace) and produce a patch')
   console.log('  review   Display artifacts from a completed run')
   console.log('  approve  Apply a reviewed run to a git branch with evidence hash')
+  console.log('  session  Manage iterative session chains (create, list, status, close)')
   console.log('  skill    Manage the Skill Reactor vault (import, test, promote, rollback)')
 }
 
@@ -90,13 +93,31 @@ switch (command) {
 
   case 'run': {
     let yes = false
-    let args = rest
-    if (args[0] === '--yes') {
-      yes = true
-      args = args.slice(1)
+    let sessionId: string | undefined
+    const positionalArgs: string[] = []
+    let i = 0
+    while (i < rest.length) {
+      const a = rest[i]
+      if (a === '--yes') {
+        yes = true
+        i++
+      } else if (a === '--session') {
+        const next = rest[i + 1]
+        if (next && !next.startsWith('-')) {
+          sessionId = next
+          i += 2
+        } else {
+          i++
+        }
+      } else if (a !== undefined && !a.startsWith('-')) {
+        positionalArgs.push(a)
+        i++
+      } else {
+        i++
+      }
     }
-    const projectPath = args[0]
-    const task = args[1]
+    const projectPath = positionalArgs[0]
+    const task = positionalArgs[1]
     if (!projectPath) {
       console.error('Error: project-path is required.')
       printUsage()
@@ -107,7 +128,7 @@ switch (command) {
       printUsage()
       process.exit(1)
     }
-    await cmdRun(projectPath, task, { yes })
+    await cmdRun(projectPath, task, { yes, sessionId })
     break
   }
 
@@ -118,6 +139,12 @@ switch (command) {
 
   case 'approve': {
     await cmdApprove(rest)
+    break
+  }
+
+  case 'session': {
+    const subcommand = rest[0]
+    await cmdSession(subcommand, rest.slice(1))
     break
   }
 

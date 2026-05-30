@@ -11,6 +11,8 @@ import { ensureSprint4aAgent } from '../../provision/ensure-sprint4a-agent.js'
 import { loadOperatorState, isStatePlausible } from '../../platform/operator-state.js'
 import { makeRunArtifactDirectory } from '../../runs/find-run.js'
 import { printRunDisclosureSummary, printRunSummary } from '../terminal-output.js'
+import { loadSession } from '../../sessions/session-chain.js'
+import { buildSessionRunSnapshot } from '../../sessions/session-workspace.js'
 
 // Workspace must be under /tmp — Docker executor enforces this
 const WORKSPACE_TMP_BASE = '/tmp/powerplant-runs'
@@ -46,7 +48,7 @@ async function confirm(prompt: string): Promise<boolean> {
 export async function cmdRun(
   projectPath: string,
   task: string,
-  opts: { yes: boolean },
+  opts: { yes: boolean; sessionId?: string },
 ): Promise<void> {
   if (!task || !task.trim()) {
     console.error('Error: task must not be empty.')
@@ -71,25 +73,49 @@ export async function cmdRun(
     process.exit(1)
   }
 
-  let preview
-  try {
-    preview = previewSanitization(contract)
-  } catch (err) {
-    console.error(`Error during sanitization preview: ${String(err)}`)
-    process.exit(1)
-  }
-
-  const projectName = path.basename(absPath)
   const declaredChecks = Object.keys(contract.allowedChecks)
 
-  printRunDisclosureSummary({
-    projectName,
-    preview,
-    allowedReadPaths: contract.allowedReadPaths,
-    allowedWritePaths: contract.allowedWritePaths,
-    allowedChecks: declaredChecks,
-    forbiddenPaths: contract.excludePaths,
-  })
+  // Session validation — must happen before disclosure so we can refuse early
+  if (opts.sessionId) {
+    let session
+    try {
+      session = loadSession(opts.sessionId)
+    } catch (err) {
+      console.error(`Error: ${String(err).replace('Error: ', '')}`)
+      process.exit(1)
+    }
+    if (session.status === 'closed') {
+      console.error(`Error: Session ${opts.sessionId} is closed. Cannot run against a closed session.`)
+      process.exit(1)
+    }
+    if (session.projectId !== contract.projectId) {
+      console.error(
+        `Error: Session project ID (${session.projectId}) does not match ` +
+        `project contract (${contract.projectId}).`,
+      )
+      process.exit(1)
+    }
+  }
+
+  if (!opts.sessionId) {
+    let preview
+    try {
+      preview = previewSanitization(contract)
+    } catch (err) {
+      console.error(`Error during sanitization preview: ${String(err)}`)
+      process.exit(1)
+    }
+
+    const projectName = path.basename(absPath)
+    printRunDisclosureSummary({
+      projectName,
+      preview,
+      allowedReadPaths: contract.allowedReadPaths,
+      allowedWritePaths: contract.allowedWritePaths,
+      allowedChecks: declaredChecks,
+      forbiddenPaths: contract.excludePaths,
+    })
+  }
 
   if (!opts.yes) {
     const ok = await confirm('Continue? [y/N] ')
@@ -150,17 +176,36 @@ export async function cmdRun(
   console.log()
   console.log(`Run ID:    ${runId}`)
   console.log(`Task:      ${task}`)
-  console.log('Building sanitized snapshot...')
 
   let snapshot
-  try {
-    snapshot = buildPilotSnapshot(contract, runDir)
-  } catch (err) {
-    console.error(`Error building snapshot: ${String(err)}`)
-    process.exit(1)
+  if (opts.sessionId) {
+    // Re-load session here (already validated above, but state may have changed)
+    let session
+    try {
+      session = loadSession(opts.sessionId)
+    } catch (err) {
+      console.error(`Error: ${String(err).replace('Error: ', '')}`)
+      process.exit(1)
+    }
+    console.log(`Session:   ${session.sessionId} (chain: ${session.chainLinks.length})`)
+    console.log('Building session workspace...')
+    try {
+      snapshot = buildSessionRunSnapshot(session, contract, runDir, patchDir)
+    } catch (err) {
+      console.error(`Error building session workspace: ${String(err)}`)
+      process.exit(1)
+    }
+    console.log(`Workspace: ${snapshot.sanitizedManifest.files.length} files from session`)
+  } else {
+    console.log('Building sanitized snapshot...')
+    try {
+      snapshot = buildPilotSnapshot(contract, runDir)
+    } catch (err) {
+      console.error(`Error building snapshot: ${String(err)}`)
+      process.exit(1)
+    }
+    console.log(`Snapshot:  ${snapshot.sanitizedManifest.files.length} files`)
   }
-
-  console.log(`Snapshot:  ${snapshot.sanitizedManifest.files.length} files`)
   console.log('Starting broker session...')
 
   // Append mandatory procedure reminder so the agent calls project_run_check + project_finalize.
