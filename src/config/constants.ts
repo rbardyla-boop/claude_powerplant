@@ -219,6 +219,9 @@ export const SKILL_INVOCATION_PHASE_B = 'phase-b-completion' as const
 
 // Stage 2B Preflight Gates (P0-A / P0-B / P0-C)
 export const STAGE2B_PREFLIGHT_BASE = '/tmp/powerplant-stage2b-preflight' as const
+
+// Stage 2C — L1 Managed-Agent Harness
+export const STAGE2C_RUNTIME_BASE = '/tmp/powerplant-stage2c' as const
 export const STAGE2B_ORACLE_TASK_SPEC_VERSION = 'summarizeChecks-v1' as const
 export const STAGE2B_PREFLIGHT_EVALUATOR_PROFILE_ID = 'subprocess-node-v1' as const
 export const STAGE2B_PREFLIGHT_CONTROL_POLICY_VERSION = 'stage2b-preflight-v1' as const
