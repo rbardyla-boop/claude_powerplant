@@ -1,24 +1,158 @@
 import fs from 'fs'
 import path from 'path'
 import { findRunDirectory } from '../../runs/find-run.js'
-import { printReviewReport } from '../terminal-output.js'
+import { printReviewTui } from '../terminal-output.js'
+import { parseVerificationReport } from '../parse-verification-report.js'
 import type { RunClassification } from '../../contracts/project-tool-contracts.js'
+import type { ReviewRenderState } from '../../contracts/review-render.js'
 
-const REQUIRED_ARTIFACTS = [
-  'SOURCE_MANIFEST.json',
-  'SANITIZED_MANIFEST.json',
-  'TASK.md',
-  'PATCH.diff',
-  'CHANGED_FILES.md',
-  'VERIFICATION_REPORT.md',
-  'ADVERSARIAL_REVIEW.md',
-  'SESSION_SUMMARY.json',
-] as const
+const SEVERITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 } as const
+type RiskSeverity = keyof typeof SEVERITY_ORDER
 
-export async function cmdReview(runId: string): Promise<void> {
-  if (!runId || !runId.trim()) {
+// ── Artifact parsing helpers ──────────────────────────────────────────────────
+
+function readFile(dir: string, name: string): string {
+  const p = path.join(dir, name)
+  return fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : ''
+}
+
+function readJson<T>(dir: string, name: string): T | undefined {
+  const p = path.join(dir, name)
+  if (!fs.existsSync(p)) return undefined
+  try { return JSON.parse(fs.readFileSync(p, 'utf-8')) as T } catch { return undefined }
+}
+
+function parseDiff(raw: string): ReviewRenderState['diff'] {
+  if (!raw.trim()) return { files: 0, linesAdded: 0, linesRemoved: 0, raw }
+  const files = (raw.match(/^--- a\//gm) ?? []).length
+  const linesAdded = (raw.match(/^\+(?!\+\+)/gm) ?? []).length
+  const linesRemoved = (raw.match(/^-(?!--)/gm) ?? []).length
+  return { files, linesAdded, linesRemoved, raw }
+}
+
+function parseChecks(verificationMd: string): ReviewRenderState['checks'] {
+  const parsed = parseVerificationReport(verificationMd)
+  if (parsed.format !== 'current') return []
+
+  const finalAttempts = parsed.attempts.filter((_, i) => !parsed.intermediateIndices.has(i))
+
+  return finalAttempts.map(attempt => {
+    const escaped = attempt.checkId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const sectionRe = new RegExp(`### Check: \`${escaped}\`([\\s\\S]*?)(?=### Check:|$)`)
+    const section = sectionRe.exec(verificationMd)?.[1] ?? ''
+
+    const exitCodeMatch = /Exit code:\s*(\d+)/i.exec(section)
+    const exitCode = exitCodeMatch ? parseInt(exitCodeMatch[1]!, 10) : null
+
+    const codeBlock = /```[^\n]*\n([\s\S]*?)```/i.exec(section)
+    const snippet = (codeBlock?.[1] ?? '').trim().split('\n')[0]?.trim().slice(0, 80) ?? ''
+
+    const status: 'pass' | 'fail' | 'skip' =
+      attempt.isPass ? 'pass' : attempt.verdict === 'SKIP' ? 'skip' : 'fail'
+
+    return { name: attempt.checkId, status, exitCode, snippet }
+  })
+}
+
+function parseRisks(adversarialMd: string): ReviewRenderState['risks'] {
+  const risks: ReviewRenderState['risks'] = []
+  const re = /(?:\[|\*\*|^[-*\s]*)(CRITICAL|HIGH|MEDIUM|LOW)(?:\]|\*\*)?[:\s]+(.+)/gim
+  let m: RegExpExecArray | null
+  while ((m = re.exec(adversarialMd)) !== null) {
+    const severity = m[1]!.toUpperCase() as RiskSeverity
+    const finding = m[2]!.trim().replace(/[*_]/g, '').slice(0, 200)
+    if (finding) risks.push({ severity, finding })
+  }
+  return risks.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
+}
+
+function computeOverallStatus(
+  checks: ReviewRenderState['checks'],
+  risks: ReviewRenderState['risks'],
+  classification: RunClassification | undefined,
+  verificationMd: string,
+): ReviewRenderState['overallStatus'] {
+  let anyCheckFailed = false
+  let hasEnoughInfo = false
+
+  if (classification !== undefined) {
+    hasEnoughInfo = true
+    anyCheckFailed = !classification.patchEligibleForApplication
+  } else if (verificationMd) {
+    const parsed = parseVerificationReport(verificationMd)
+    if (parsed.format === 'current') {
+      hasEnoughInfo = true
+      anyCheckFailed = parsed.finalVerdict !== 'PASS' || parsed.hasIntegrityFailure
+    }
+  }
+
+  if (!hasEnoughInfo && checks.length > 0) {
+    hasEnoughInfo = true
+    anyCheckFailed = checks.some(c => c.status === 'fail')
+  }
+
+  if (!hasEnoughInfo) return 'UNKNOWN'
+  if (anyCheckFailed) return 'FAIL'
+  if (risks.some(r => r.severity === 'CRITICAL' || r.severity === 'HIGH')) return 'RISK'
+  return 'PASS'
+}
+
+function computeNextAction(
+  status: ReviewRenderState['overallStatus'],
+  runId: string,
+): string {
+  switch (status) {
+    case 'PASS': return `powerplant approve ${runId}`
+    case 'RISK': return `Review HIGH/CRITICAL risks above, then: powerplant approve ${runId}`
+    case 'FAIL': return `Fix failing checks and re-run the task`
+    default: return `Review artifacts manually: powerplant review ${runId} --json`
+  }
+}
+
+// ── Public builder (exported for tests) ──────────────────────────────────────
+
+export function buildReviewRenderState(runId: string, artifactDir: string): ReviewRenderState {
+  const projectId = path.basename(path.dirname(artifactDir))
+  const task = readFile(artifactDir, 'TASK.md').trim() || '(no task recorded)'
+  const verificationMd = readFile(artifactDir, 'VERIFICATION_REPORT.md')
+  const adversarialMd = readFile(artifactDir, 'ADVERSARIAL_REVIEW.md')
+
+  let classification = readJson<RunClassification>(artifactDir, 'RUN_CLASSIFICATION.json')
+  if (!classification) {
+    const failMd = readFile(artifactDir, 'FAILURE_CLASSIFICATION.md')
+    if (failMd) {
+      const sM = failMd.match(/runStatus:\s*(\S+)/)
+      const eM = failMd.match(/patchEligibleForApplication:\s*(\S+)/)
+      if (sM || eM) {
+        classification = {
+          terminationReason: (sM?.[1] ?? 'FAILED_INCOMPLETE_AGENT_RUN') as RunClassification['terminationReason'],
+          patchEligibleForApplication: eM?.[1] === 'true',
+          readCount: 0, writeCount: 0, checkCount: 0,
+          finalizeAttempted: false, artifactsComplete: false, repeatedCheckFailures: false,
+        }
+      }
+    }
+  }
+
+  const diff = parseDiff(readFile(artifactDir, 'PATCH.diff'))
+  const checks = parseChecks(verificationMd)
+  const risks = parseRisks(adversarialMd)
+  const overallStatus = computeOverallStatus(checks, risks, classification, verificationMd)
+  const nextAction = computeNextAction(overallStatus, runId)
+
+  return { runId, projectId, task, overallStatus, diff, checks, risks, nextAction }
+}
+
+// ── Command ───────────────────────────────────────────────────────────────────
+
+export async function cmdReview(args: string[]): Promise<void> {
+  const runId = args.find(a => !a.startsWith('-'))
+  const jsonMode = args.includes('--json')
+  const diffMode = args.includes('--diff')
+
+  if (!runId?.trim()) {
     console.error('Error: run ID must not be empty.')
-    console.error('Usage: powerplant review <run-id>')
+    console.error('Usage: powerplant review <run-id> [--json] [--diff]')
     process.exit(1)
   }
 
@@ -29,81 +163,21 @@ export async function cmdReview(runId: string): Promise<void> {
     process.exit(1)
   }
 
-  // Validate all required artifacts exist
-  const missing: string[] = []
-  for (const artifact of REQUIRED_ARTIFACTS) {
-    if (!fs.existsSync(path.join(artifactDir, artifact))) {
-      missing.push(artifact)
+  const state = buildReviewRenderState(runId, artifactDir)
+
+  if (jsonMode) {
+    console.log(JSON.stringify(state, null, 2))
+    return
+  }
+
+  if (diffMode) {
+    if (state.diff.raw) {
+      process.stdout.write(state.diff.raw)
+    } else {
+      console.log('(no diff available)')
     }
-  }
-  if (missing.length > 0) {
-    console.error(`Error: Run artifacts are incomplete. Missing:`)
-    for (const m of missing) {
-      console.error(`  - ${m}`)
-    }
-    console.error(`Artifact directory: ${artifactDir}`)
-    process.exit(1)
+    return
   }
 
-  // Read artifacts
-  const task = fs.readFileSync(path.join(artifactDir, 'TASK.md'), 'utf-8').trim()
-  const patchDiff = fs.readFileSync(path.join(artifactDir, 'PATCH.diff'), 'utf-8')
-  const changedFilesMd = fs.readFileSync(path.join(artifactDir, 'CHANGED_FILES.md'), 'utf-8')
-  const verificationMd = fs.readFileSync(path.join(artifactDir, 'VERIFICATION_REPORT.md'), 'utf-8')
-  const adversarialMd = fs.readFileSync(path.join(artifactDir, 'ADVERSARIAL_REVIEW.md'), 'utf-8')
-
-  let sessionSummary: Record<string, unknown> = {}
-  try {
-    const raw = fs.readFileSync(path.join(artifactDir, 'SESSION_SUMMARY.json'), 'utf-8')
-    sessionSummary = JSON.parse(raw) as Record<string, unknown>
-  } catch {
-    console.error('Error: SESSION_SUMMARY.json is invalid JSON.')
-    process.exit(1)
-  }
-
-  // Optional — present only in runs that emitted PROMPT_ENVELOPE.json
-  let promptEnvelope: Record<string, unknown> | undefined
-  const envelopePath = path.join(artifactDir, 'PROMPT_ENVELOPE.json')
-  if (fs.existsSync(envelopePath)) {
-    try {
-      promptEnvelope = JSON.parse(fs.readFileSync(envelopePath, 'utf-8')) as Record<string, unknown>
-    } catch {
-      // Malformed envelope — display without it
-    }
-  }
-
-  let runClassification: RunClassification | undefined
-  const classificationPath = path.join(artifactDir, 'RUN_CLASSIFICATION.json')
-  if (fs.existsSync(classificationPath)) {
-    try { runClassification = JSON.parse(fs.readFileSync(classificationPath, 'utf-8')) as RunClassification } catch { /* fallback */ }
-  }
-  if (!runClassification) {
-    const failPath = path.join(artifactDir, 'FAILURE_CLASSIFICATION.md')
-    if (fs.existsSync(failPath)) {
-      const md = fs.readFileSync(failPath, 'utf-8')
-      const sM = md.match(/runStatus:\s*(\S+)/)
-      const eM = md.match(/patchEligibleForApplication:\s*(\S+)/)
-      if (sM || eM) {
-        runClassification = {
-          terminationReason: (sM?.[1] ?? 'FAILED_INCOMPLETE_AGENT_RUN') as RunClassification['terminationReason'],
-          patchEligibleForApplication: eM?.[1] === 'true',
-          readCount: 0, writeCount: 0, checkCount: 0,
-          finalizeAttempted: false, artifactsComplete: false, repeatedCheckFailures: false,
-        }
-      }
-    }
-  }
-
-  printReviewReport({
-    runId,
-    artifactDir,
-    task,
-    patchDiff,
-    changedFilesMd,
-    verificationMd,
-    adversarialMd,
-    sessionSummary,
-    promptEnvelope,
-    runClassification,
-  })
+  printReviewTui(state)
 }
