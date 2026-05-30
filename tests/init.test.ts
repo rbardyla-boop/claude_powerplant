@@ -36,12 +36,16 @@ describe('generatePolicyYaml', () => {
       const out = generatePolicyYaml(stack, `test-id-${stack}`)
       const doc = yaml.load(out) as Record<string, unknown>
       const excludes = doc['excludePaths'] as string[]
-      expect(excludes).toContain('.git/**')
-      expect(excludes).toContain('node_modules/**')
+      expect(excludes).toContain('**/.git/**')
+      expect(excludes).toContain('**/node_modules/**')
       expect(excludes).toContain('.env')
       expect(excludes).toContain('.env.*')
       expect(excludes).toContain('**/*.key')
       expect(excludes).toContain('**/*.pem')
+      expect(excludes).toContain('**/.venv/**')
+      expect(excludes).toContain('**/venv/**')
+      expect(excludes).toContain('**/__pycache__/**')
+      expect(excludes).toContain('**/.pytest_cache/**')
     }
   })
 

@@ -70,13 +70,14 @@ function sha256ofFile(filePath: string): string {
 }
 
 /**
- * Walk the workspace and find all files that match the contract's allowedWritePaths
- * and differ from the baseline. Supports glob patterns (src/engine/tests/**).
+ * Walk the workspace and find all files that match the contract's allowedWritePaths,
+ * are not excluded by excludePaths, and differ from the baseline.
  */
 function findChangedWritePaths(
   baselinePath: string,
   workspacePath: string,
   allowedWritePaths: string[],
+  excludePaths: string[] = [],
 ): string[] {
   const changed: string[] = []
 
@@ -89,6 +90,7 @@ function findChangedWritePaths(
       if (stat.isDirectory()) {
         walkWorkspace(abs)
       } else {
+        if (excludePaths.some(pattern => matchesGlob(relPath, pattern))) continue
         const authorized = allowedWritePaths.some(pattern => matchesGlob(relPath, pattern))
         if (!authorized) continue
         const baseFile = path.join(baselinePath, relPath)
@@ -208,6 +210,7 @@ export async function generatePatchPackage(opts: {
     snapshot.baselinePath,
     snapshot.workspacePath,
     contract.allowedWritePaths,
+    contract.excludePaths,
   )
   let patchContent = ''
   for (const relPath of changedPaths) {
