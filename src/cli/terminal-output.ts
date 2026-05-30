@@ -249,22 +249,22 @@ export function printRunSummary(opts: {
 }
 
 function checkVerdictSuffix(check: CheckResult): string {
+  const advisory = check.advisory === true ? ' (advisory)' : ''
   switch (check.verdict) {
     case 'BLOCKED_MISSING_TOOLING': {
-      // Try to extract tool name from "X: not found" or "Cannot find module 'X'"
       const fromNotFound = check.stderrTail.match(/(\w+): (?:command )?not found/i)
       const fromModule = check.stderrTail.match(/Cannot find module '([\w@][\w@/-]*)'/i)
       const toolName = fromNotFound?.[1] ?? fromModule?.[1] ?? null
       return toolName
-        ? ` — ${toolName} unavailable in isolated workspace`
-        : ' — tooling unavailable in isolated workspace'
+        ? ` — ${toolName} unavailable in isolated workspace${advisory}`
+        : ` — tooling unavailable in isolated workspace${advisory}`
     }
     case 'FAIL_CHECK':
-      return ' — check failed (see report for details)'
+      return ` — check failed (see report for details)${advisory}`
     case 'FAIL_BOUNDARY':
       return ' — security boundary violation'
     default:
-      return ''
+      return advisory
   }
 }
 

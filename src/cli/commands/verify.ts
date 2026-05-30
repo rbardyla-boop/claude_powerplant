@@ -37,9 +37,12 @@ function resolveProjectPath(rawPath: string): string {
 }
 
 function deriveOverallVerdict(checks: CheckResult[]): OverallVerdict {
-  if (checks.some(c => c.verdict === 'FAIL_BOUNDARY')) return 'FAIL_BOUNDARY'
-  if (checks.some(c => c.verdict === 'BLOCKED_MISSING_TOOLING')) return 'BLOCKED_MISSING_TOOLING'
-  if (checks.some(c => c.verdict === 'FAIL_CHECK')) return 'FAIL_CHECK'
+  // Advisory checks (required: false) are recorded but never block the verdict.
+  const required = checks.filter(c => c.advisory !== true)
+  if (required.some(c => c.verdict === 'FAIL_BOUNDARY')) return 'FAIL_BOUNDARY'
+  if (required.some(c => c.verdict === 'BLOCKED_MISSING_TOOLING')) return 'BLOCKED_MISSING_TOOLING'
+  if (required.some(c => c.verdict === 'FAIL_VERIFICATION_INTEGRITY')) return 'FAIL_VERIFICATION_INTEGRITY'
+  if (required.some(c => c.verdict === 'FAIL_CHECK')) return 'FAIL_CHECK'
   return 'PASS'
 }
 

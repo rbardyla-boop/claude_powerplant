@@ -9,17 +9,25 @@ const CHECK_TIMEOUT_MS = 120_000
 /**
  * Minimal environment for check execution.
  *
- * Only PATH is forwarded so tool binaries can be located.
- * No API keys, no HOME dot-files, no credential env vars,
- * no proxy settings, no SSH agents.
+ * PATH is forwarded so tool binaries can be located.
+ * RUSTUP_HOME and CARGO_HOME are forwarded when present so Rust toolchain
+ * managers can locate installed toolchains — these are not credentials.
+ * HOME is redirected to /tmp to prevent dot-file access.
+ * No API keys, no credential env vars, no proxy settings, no SSH agents.
  */
 function buildCleanEnv(): NodeJS.ProcessEnv {
-  return {
+  const realHome = process.env['HOME']
+  const env: NodeJS.ProcessEnv = {
     PATH: process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin',
     HOME: '/tmp',
     NO_UPDATE_NOTIFIER: '1',
     npm_config_update_notifier: 'false',
   }
+  const rustupHome = process.env['RUSTUP_HOME'] ?? (realHome ? `${realHome}/.rustup` : undefined)
+  const cargoHome = process.env['CARGO_HOME'] ?? (realHome ? `${realHome}/.cargo` : undefined)
+  if (rustupHome !== undefined) env['RUSTUP_HOME'] = rustupHome
+  if (cargoHome !== undefined) env['CARGO_HOME'] = cargoHome
+  return env
 }
 
 /**
@@ -49,15 +57,18 @@ function inferCheckKind(checkId: string, command: string): 'test' | 'typecheck' 
  *
  * No API calls, no Managed Agents session, no original project mounted.
  * Clean environment ensures no credentials reach the executor.
+ *
+ * required: false marks a check as advisory — its failure is recorded but
+ * does not affect the overall PASS/FAIL verdict.
  */
 export function runApprovedChecks(
   workspacePath: string,
-  checks: Record<string, { command: string }>,
+  checks: Record<string, { command: string; required?: boolean }>,
 ): CheckResult[] {
   const env = buildCleanEnv()
   const results: CheckResult[] = []
 
-  for (const [checkId, { command }] of Object.entries(checks)) {
+  for (const [checkId, { command, required }] of Object.entries(checks)) {
     const [executable, args] = splitCommand(command)
 
     const result = spawnSync(executable, args, {
@@ -84,9 +95,8 @@ export function runApprovedChecks(
       stdoutTail: tailOutput(stdout),
       stderrTail: tailOutput(stderr),
     }
-    if (spawnError !== null) {
-      entry.detail = String(spawnError)
-    }
+    if (required === false) entry.advisory = true
+    if (spawnError !== null) entry.detail = String(spawnError)
     results.push(entry)
   }
 
@@ -105,7 +115,7 @@ export function runApprovedChecks(
  */
 export async function executeChecksWithProfile(
   workspacePath: string,
-  checks: Record<string, { command: string }>,
+  checks: Record<string, { command: string; required?: boolean }>,
   verificationProfileId: string | null,
 ): Promise<CheckResult[]> {
   if (verificationProfileId !== null) {

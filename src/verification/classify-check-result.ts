@@ -14,10 +14,15 @@ const TOOLING_MISSING_PATTERNS: RegExp[] = [
 
 // Patterns that indicate zero tests were discovered in a test run.
 // These indicate a misconfigured test runner, not an actual passing suite.
+//
+// IMPORTANT: Do not add patterns that match per-binary runner lines.
+// Rust/cargo emits "running 0 tests" for each crate binary that has no
+// tests — this is normal in a workspace and must not trigger the guard.
+// Patterns here must match *summary-level* zero-test signals only.
 const ZERO_TESTS_PATTERNS: RegExp[] = [
-  /^# tests 0\b/m,
-  /\bNo test files found\b/i,
-  /\b0 tests\b.*$/m,
+  /^# tests 0\b/m,                    // Node built-in TAP summary
+  /\bNo test files found\b/i,          // vitest: no files matched the pattern
+  /\bran 0 tests\b/i,                  // pytest summary: "ran 0 tests in 0.00s"
 ]
 
 const SAFE_OUTPUT_TAIL_BYTES = 2048
