@@ -60,9 +60,13 @@ function gitCreateBranch(branchName: string, projectPath: string): boolean {
  * This stages exactly the files touched by the patch and nothing else,
  * preventing pre-existing working-tree changes from being swept into the
  * commit by a subsequent "git add -A".
+ *
+ * --whitespace=nowarn suppresses trailing-whitespace errors so that
+ * generated text content (Markdown, docs) with trailing spaces applies
+ * cleanly regardless of the project's core.whitespace setting.
  */
 function gitApplyPatch(patchPath: string, projectPath: string): { ok: boolean; stderr: string } {
-  const r = spawnSync('git', ['apply', '--index', patchPath], {
+  const r = spawnSync('git', ['apply', '--index', '--whitespace=nowarn', patchPath], {
     cwd: projectPath,
     encoding: 'utf-8',
   })
