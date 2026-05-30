@@ -16,6 +16,12 @@ const REQUIRED_EXCLUDES = [
   '**/.pytest_cache/**',
 ]
 
+const RUST_EXCLUDES = [
+  ...REQUIRED_EXCLUDES,
+  'target/**',
+  '**/target/**',
+]
+
 const DENY_IF_PRESENT = ['.env', '.git']
 
 interface PolicyPaths {
@@ -45,9 +51,18 @@ const STACK_PATHS: Record<StackId, PolicyPaths> = {
     allowedWritePaths: ['**/*.go'],
   },
   rust: {
-    includePaths: ['**/*.rs', 'Cargo.toml', 'Cargo.lock'],
-    allowedReadPaths: ['**/*.rs', 'Cargo.toml', 'Cargo.lock', ...POWERPLANT_READ],
-    allowedWritePaths: ['**/*.rs'],
+    includePaths: [
+      '**/*.rs', '**/*.toml', 'Cargo.lock',
+      'README.md', 'docs/**', 'tests/**', 'benches/**', 'examples/**',
+    ],
+    allowedReadPaths: [
+      '**/*.rs', '**/*.toml', 'Cargo.lock',
+      'README.md', 'docs/**', 'tests/**', 'benches/**', 'examples/**',
+      ...POWERPLANT_READ,
+    ],
+    // Narrow write surface: docs and test outputs only.
+    // Expand explicitly if the task requires modifying source.
+    allowedWritePaths: ['docs/**', 'tests/**'],
   },
   generic: {
     includePaths: ['src/**'],
@@ -72,10 +87,11 @@ export function generateProjectId(projectDir: string): string {
  */
 export function generatePolicyYaml(stack: StackId, projectId: string): string {
   const paths = STACK_PATHS[stack]
+  const excludePaths = stack === 'rust' ? RUST_EXCLUDES : REQUIRED_EXCLUDES
   const doc = {
     projectId,
     includePaths: paths.includePaths,
-    excludePaths: REQUIRED_EXCLUDES,
+    excludePaths,
     denyIfPresentAfterCopy: DENY_IF_PRESENT,
     allowedReadPaths: paths.allowedReadPaths,
     allowedWritePaths: paths.allowedWritePaths,

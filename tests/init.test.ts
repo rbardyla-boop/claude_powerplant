@@ -130,10 +130,28 @@ describe('generateVerifyYaml', () => {
     expect(doc['verificationProfile']).toBeUndefined()
   })
 
-  it('rust generates cargo test check', () => {
+  it('rust generates cargo build --workspace and cargo test --workspace checks', () => {
     const doc = yaml.load(generateVerifyYaml('rust')) as Record<string, unknown>
-    const checks = doc['checks'] as Record<string, { command: string }>
-    expect(checks['test']?.command).toBe('cargo test')
+    const checks = doc['checks'] as Record<string, { command: string; required?: boolean }>
+    expect(checks['build']?.command).toBe('cargo build --workspace')
+    expect(checks['test']?.command).toBe('cargo test --workspace')
+  })
+
+  it('rust generates advisory clippy and format checks', () => {
+    const doc = yaml.load(generateVerifyYaml('rust')) as Record<string, unknown>
+    const checks = doc['checks'] as Record<string, { command: string; required?: boolean }>
+    expect(checks['clippy']?.command).toBe('cargo clippy --workspace -- -D warnings')
+    expect(checks['clippy']?.required).toBe(false)
+    expect(checks['format']?.command).toBe('cargo fmt --check')
+    expect(checks['format']?.required).toBe(false)
+  })
+
+  it('rust build and test checks are required (default)', () => {
+    const doc = yaml.load(generateVerifyYaml('rust')) as Record<string, unknown>
+    const checks = doc['checks'] as Record<string, { command: string; required?: boolean }>
+    // required is omitted (default true) or explicitly true
+    expect(checks['build']?.required).not.toBe(false)
+    expect(checks['test']?.required).not.toBe(false)
   })
 
   it('generic fallback omits verificationProfile (no capsule shipped)', () => {
@@ -520,6 +538,31 @@ describe('generatePolicyYaml: README.md in default allowedReadPaths', () => {
   it('rust allowedReadPaths includes README.md', () => {
     const doc = yaml.load(generatePolicyYaml('rust', 'test-id')) as Record<string, unknown>
     expect(doc['allowedReadPaths'] as string[]).toContain('README.md')
+  })
+
+  it('rust excludePaths contains target/** and **/target/**', () => {
+    const doc = yaml.load(generatePolicyYaml('rust', 'test-id')) as Record<string, unknown>
+    const excludePaths = doc['excludePaths'] as string[]
+    expect(excludePaths).toContain('target/**')
+    expect(excludePaths).toContain('**/target/**')
+  })
+
+  it('rust includePaths and allowedReadPaths include docs/** and tests/**', () => {
+    const doc = yaml.load(generatePolicyYaml('rust', 'test-id')) as Record<string, unknown>
+    const includePaths = doc['includePaths'] as string[]
+    const allowedReadPaths = doc['allowedReadPaths'] as string[]
+    expect(includePaths).toContain('docs/**')
+    expect(includePaths).toContain('tests/**')
+    expect(allowedReadPaths).toContain('docs/**')
+    expect(allowedReadPaths).toContain('tests/**')
+  })
+
+  it('rust allowedWritePaths is narrow (docs/** and tests/**) not **/*.rs', () => {
+    const doc = yaml.load(generatePolicyYaml('rust', 'test-id')) as Record<string, unknown>
+    const allowedWritePaths = doc['allowedWritePaths'] as string[]
+    expect(allowedWritePaths).not.toContain('**/*.rs')
+    expect(allowedWritePaths).toContain('docs/**')
+    expect(allowedWritePaths).toContain('tests/**')
   })
 
   it('generic allowedReadPaths includes README.md', () => {
