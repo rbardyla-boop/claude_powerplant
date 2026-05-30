@@ -285,7 +285,7 @@ describe('project-tool-contracts', () => {
   })
 
   describe('broker authorization — isCheckAuthorized', () => {
-    const checks = { test: { command: 'node --test' }, typecheck: { command: 'tsc --noEmit' } }
+    const checks = { test: { command: 'node --test', required: true }, typecheck: { command: 'tsc --noEmit', required: true } }
 
     it('authorizes declared check', () => {
       expect(isCheckAuthorized('test', checks)).toBe(true)

@@ -17,6 +17,7 @@ export const CheckResultSchema = z.object({
   stdoutTail: z.string(),
   stderrTail: z.string(),
   detail: z.string().optional(),
+  advisory: z.boolean().optional(),
 })
 export type CheckResult = z.infer<typeof CheckResultSchema>
 

@@ -89,7 +89,7 @@ describe('broker check validation — schema rejects shell command shapes', () =
 
 describe('broker check authorization — isCheckAuthorized', () => {
   // Even valid-shaped check IDs are rejected by the broker if not in VERIFY.yaml
-  const CONTRACT_CHECKS = { test: { command: 'node --test' } }
+  const CONTRACT_CHECKS = { test: { command: 'node --test', required: true } }
 
   it('denies "bash" even though schema accepts it', () => {
     expect(RunCheckInputSchema.safeParse({ check: 'bash' }).success).toBe(true) // schema OK
@@ -131,6 +131,92 @@ describe('finalize gate', () => {
 
     testCheckPassed = true
     expect(() => callFinalize()).not.toThrow()
+  })
+
+  it('advisory-only project: testCheckPassed starts true (no required checks)', () => {
+    // When all declared checks are required:false, the finalization gate
+    // must start open — no required check needs to pass.
+    const allowedChecks: Record<string, { command: string; required: boolean }> = {
+      tests: { command: 'python3 -m pytest', required: false },
+    }
+    const hasRequiredChecks = Object.values(allowedChecks).some(c => c.required)
+    const testCheckPassed = !hasRequiredChecks
+    expect(testCheckPassed).toBe(true)
+  })
+
+  it('advisory check failure does not close the finalization gate', () => {
+    // Simulate broker state machine: advisory check fails, finalize should succeed.
+    let testCheckPassed = true   // initialized open because no required checks
+    let checksValidAfterLastWrite = false
+
+    function runAdvisoryCheck(passed: boolean, isRequired: boolean): void {
+      if (isRequired) {
+        testCheckPassed = passed
+      }
+      if (passed || !isRequired) {
+        checksValidAfterLastWrite = true
+      }
+    }
+
+    function callFinalize(): string {
+      if (!testCheckPassed) throw new Error('project_finalize rejected: test check has not passed')
+      if (!checksValidAfterLastWrite) throw new Error('project_finalize rejected: checks must pass after last write')
+      return 'finalized'
+    }
+
+    // Write invalidates check gate
+    checksValidAfterLastWrite = false
+
+    // Advisory check fails — gate should still open for finalization
+    runAdvisoryCheck(false, false)
+
+    expect(testCheckPassed).toBe(true)
+    expect(checksValidAfterLastWrite).toBe(true)
+    expect(() => callFinalize()).not.toThrow()
+  })
+
+  it('required check failure blocks finalization', () => {
+    let testCheckPassed = false  // initialized closed because required checks exist
+    let checksValidAfterLastWrite = false
+
+    function runCheck(passed: boolean, isRequired: boolean): void {
+      if (isRequired) testCheckPassed = passed
+      if (passed || !isRequired) checksValidAfterLastWrite = true
+    }
+
+    function callFinalize(): string {
+      if (!testCheckPassed) throw new Error('project_finalize rejected: test check has not passed')
+      if (!checksValidAfterLastWrite) throw new Error('project_finalize rejected: checks must pass after last write')
+      return 'finalized'
+    }
+
+    checksValidAfterLastWrite = false
+    runCheck(false, true)  // required check fails
+
+    expect(testCheckPassed).toBe(false)
+    expect(() => callFinalize()).toThrow(/finalize rejected/)
+  })
+
+  it('mixed checks: required failure blocks even when advisory passes', () => {
+    // required:true check A fails, required:false check B passes — gate must stay closed
+    let testCheckPassed = false  // has required checks → starts closed
+    let checksValidAfterLastWrite = false
+
+    function runCheck(passed: boolean, isRequired: boolean): void {
+      if (isRequired) testCheckPassed = passed
+      if (passed || !isRequired) checksValidAfterLastWrite = true
+    }
+
+    function callFinalize(): string {
+      if (!testCheckPassed) throw new Error('project_finalize rejected: test check has not passed')
+      return 'finalized'
+    }
+
+    runCheck(false, true)   // required check A fails
+    runCheck(true, false)   // advisory check B passes
+
+    expect(testCheckPassed).toBe(false)  // still false — required check hasn't passed
+    expect(() => callFinalize()).toThrow(/finalize rejected/)
   })
 })
 

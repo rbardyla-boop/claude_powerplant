@@ -32,8 +32,8 @@ export interface LoadedProjectContract extends ProjectContract {
   allowedReadPaths: string[]
   /** Paths the agent may write (exact or glob, resolved at broker time) */
   allowedWritePaths: string[]
-  /** Named checks the agent may invoke, mapped to their fixed commands */
-  allowedChecks: Record<string, { command: string }>
+  /** Named checks the agent may invoke, mapped to their fixed commands and required flag */
+  allowedChecks: Record<string, { command: string; required: boolean }>
   /** Optional verification runtime profile declared in VERIFY.yaml */
   verificationProfile: string | null
 }
@@ -163,7 +163,7 @@ function loadPolicyYaml(policyPath: string): {
 }
 
 function loadVerifyYaml(verifyPath: string): {
-  checks: Record<string, { command: string }>
+  checks: Record<string, { command: string; required: boolean }>
   verificationProfile: string | null
 } {
   let raw: unknown
@@ -199,7 +199,7 @@ function loadVerifyYaml(verifyPath: string): {
     throw new Error("VERIFY.yaml: 'checks' must be a mapping of check-id → { command: string }")
   }
 
-  const checks: Record<string, { command: string }> = {}
+  const checks: Record<string, { command: string; required: boolean }> = {}
   for (const [checkId, entry] of Object.entries(doc.checks as Record<string, unknown>)) {
     if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(checkId)) {
       throw new Error(
@@ -213,7 +213,17 @@ function loadVerifyYaml(verifyPath: string): {
     if (typeof entryObj['command'] !== 'string' || !entryObj['command'].trim()) {
       throw new Error(`VERIFY.yaml: check '${checkId}' must have a non-empty 'command' string`)
     }
-    checks[checkId] = { command: entryObj['command'] as string }
+    let required = true
+    if ('required' in entryObj && entryObj['required'] !== undefined) {
+      if (typeof entryObj['required'] !== 'boolean') {
+        throw new Error(
+          `VERIFY.yaml: check '${checkId}.required' must be a boolean (true or false), ` +
+          `got ${typeof entryObj['required']}`,
+        )
+      }
+      required = entryObj['required'] as boolean
+    }
+    checks[checkId] = { command: entryObj['command'] as string, required }
   }
 
   if (Object.keys(checks).length === 0) {

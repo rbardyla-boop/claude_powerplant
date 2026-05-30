@@ -176,21 +176,30 @@ async function handleRunCheck(state: BrokerState, input: unknown): Promise<strin
   }
 
   const checkEntry = state.contract.allowedChecks[check]!
+  const isRequired = checkEntry.required
   console.log(`[broker] project_run_check: check=${check} command=${checkEntry.command}`)
 
   const capsuleResult = await runCapsuleProjectChecks(
     state.snapshot.workspacePath,
-    { [check]: checkEntry },
+    { [check]: { command: checkEntry.command } },
     state.contract.verificationProfile,
   )
 
-  const checkResult = capsuleResult.checks[0]!
+  const checkResult: typeof capsuleResult.checks[0] & { advisory?: boolean } = {
+    ...capsuleResult.checks[0]!,
+    ...(isRequired ? {} : { advisory: true }),
+  }
   state.lastCheckResult = checkResult
   state.checkResults.push(checkResult)
   state.checkCount++
 
   const passed = checkResult.verdict === 'PASS'
-  state.testCheckPassed = passed
+
+  if (isRequired) {
+    // Required checks gate finalization — pass or fail is authoritative.
+    state.testCheckPassed = passed
+  }
+  // Advisory checks never change testCheckPassed regardless of outcome.
 
   if (passed) {
     state.checksValidAfterLastWrite = true
@@ -198,6 +207,10 @@ async function handleRunCheck(state: BrokerState, input: unknown): Promise<strin
     state.checkFailStreaks[check] = 0
   } else {
     state.checkFailStreaks[check] = (state.checkFailStreaks[check] ?? 0) + 1
+    if (!isRequired) {
+      // Advisory check failure still satisfies the "run checks after write" gate.
+      state.checksValidAfterLastWrite = true
+    }
   }
 
   const command = checkEntry.command
@@ -221,6 +234,7 @@ async function handleRunCheck(state: BrokerState, input: unknown): Promise<strin
     exitCode: checkResult.exitCode ?? -1,
     summary,
     diagnostics: passed ? undefined : diagnostics,
+    ...(isRequired ? {} : { advisory: true }),
   }
   return JSON.stringify(result)
 }
@@ -305,6 +319,8 @@ export async function runProjectPilotBrokerSession(opts: {
     agentMessage = taskDescription,
   } = opts
 
+  const hasRequiredChecks = Object.values(contract.allowedChecks).some(c => c.required)
+
   const state: BrokerState = {
     snapshot,
     contract,
@@ -313,7 +329,8 @@ export async function runProjectPilotBrokerSession(opts: {
     taskDescription,
     agentMessage,
     modelId: SPRINT4A_PILOT_MODEL,
-    testCheckPassed: false,
+    // If no required checks are declared, the finalization gate starts open.
+    testCheckPassed: !hasRequiredChecks,
     finalizeReceived: false,
     checkResults: [],
     lastCheckResult: null,

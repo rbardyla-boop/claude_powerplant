@@ -528,7 +528,8 @@ export function printReviewTui(state: ReviewRenderState): void {
         : (noColor ? '✗' : red('✗'))
       const exitPart = check.exitCode !== null ? `exit ${check.exitCode}` : '      '
       const snippetPart = check.snippet ? `  ${check.snippet.slice(0, 30)}` : ''
-      lines.push(row(`${sym} ${check.name.padEnd(12)}${exitPart.padEnd(9)}${snippetPart}`))
+      const advisoryPart = (check.advisory && check.status === 'fail') ? dim(' (advisory)') : ''
+      lines.push(row(`${sym} ${check.name.padEnd(12)}${exitPart.padEnd(9)}${snippetPart}${advisoryPart}`))
     }
   }
 

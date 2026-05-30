@@ -125,6 +125,7 @@ export const RunCheckResultSchema = z.object({
   exitCode: z.number().int(),
   summary: z.string(),
   diagnostics: RunCheckDiagnosticsSchema.optional(),
+  advisory: z.boolean().optional(),
 })
 export type RunCheckResult = z.infer<typeof RunCheckResultSchema>
 
@@ -161,7 +162,7 @@ export function isWritePathAuthorized(relPath: string, allowedWritePaths: string
 
 export function isCheckAuthorized(
   checkId: string,
-  allowedChecks: Record<string, { command: string }>,
+  allowedChecks: Record<string, { command: string; required: boolean }>,
 ): boolean {
   return Object.prototype.hasOwnProperty.call(allowedChecks, checkId)
 }
