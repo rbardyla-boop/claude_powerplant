@@ -209,9 +209,11 @@ export function printRunSummary(opts: {
         // Only show user-facing changed files from CHANGED_FILES content
       }
     }
-    // Parse changed files from PATCH.diff filenames
+    // Parse changed files from PATCH.diff filenames.
+    // Match +++ b/ lines (covers both modified and new files).
+    // --- a/ misses new-file hunks that start with --- /dev/null.
     if (patchDiff.trim()) {
-      const diffFiles = [...patchDiff.matchAll(/^--- a\/(.+)$/gm)].map(m => m[1])
+      const diffFiles = [...patchDiff.matchAll(/^\+\+\+ b\/(.+)$/gm)].map(m => m[1])
       if (diffFiles.length > 0) {
         for (const f of diffFiles) {
           console.log(`  - ${f}`)
@@ -330,8 +332,9 @@ export function printReviewReport(opts: {
   console.log(`Task: ${task}`)
   console.log()
 
-  // Patch changed files
-  const diffFiles = [...patchDiff.matchAll(/^--- a\/(.+)$/gm)].map(m => m[1])
+  // Patch changed files. Match +++ b/ to cover both modified and new-file hunks.
+  // --- a/ misses new-file hunks that start with --- /dev/null.
+  const diffFiles = [...patchDiff.matchAll(/^\+\+\+ b\/(.+)$/gm)].map(m => m[1])
   console.log('Patch files:')
   if (diffFiles.length === 0) {
     console.log('  (none)')

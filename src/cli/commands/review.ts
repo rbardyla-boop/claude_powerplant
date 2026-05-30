@@ -24,7 +24,8 @@ function readJson<T>(dir: string, name: string): T | undefined {
 
 function parseDiff(raw: string): ReviewRenderState['diff'] {
   if (!raw.trim()) return { files: 0, linesAdded: 0, linesRemoved: 0, raw }
-  const files = (raw.match(/^--- a\//gm) ?? []).length
+  // +++ b/ covers both modified and new-file hunks; --- a/ misses new files (--- /dev/null).
+  const files = (raw.match(/^\+\+\+ b\//gm) ?? []).length
   const linesAdded = (raw.match(/^\+(?!\+\+)/gm) ?? []).length
   const linesRemoved = (raw.match(/^-(?!--)/gm) ?? []).length
   return { files, linesAdded, linesRemoved, raw }
