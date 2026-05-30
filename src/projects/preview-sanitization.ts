@@ -25,11 +25,16 @@ export function previewSanitization(contract: ProjectContract): SanitizationPrev
   function walk(dir: string): void {
     for (const entry of fs.readdirSync(dir)) {
       const abs = path.join(dir, entry)
+      const relDir = path.relative(sourcePath, abs).replace(/\\/g, '/')
       const stat = fs.lstatSync(abs)
       if (stat.isDirectory()) {
-        walk(abs)
+        // Early prune: skip directory trees that match an excludePath pattern.
+        const dirExcluded = contract.excludePaths.some(p => matchesGlob(relDir + '/', p))
+        if (!dirExcluded) {
+          walk(abs)
+        }
       } else {
-        allFiles.push(path.relative(sourcePath, abs).replace(/\\/g, '/'))
+        allFiles.push(relDir)
       }
     }
   }
@@ -39,8 +44,10 @@ export function previewSanitization(contract: ProjectContract): SanitizationPrev
   const excludedFiles: string[] = []
 
   for (const relPath of allFiles) {
-    const matched = contract.includePaths.some(p => matchesGlob(relPath, p))
-    if (matched) {
+    const included = contract.includePaths.some(p => matchesGlob(relPath, p))
+    // excludePaths wins over includePaths — same semantics as buildSanitizedWorkspace.
+    const excluded = contract.excludePaths.some(p => matchesGlob(relPath, p))
+    if (included && !excluded) {
       includedFiles.push(relPath)
     } else {
       excludedFiles.push(relPath)

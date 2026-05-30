@@ -140,6 +140,128 @@ describe('buildSanitizedWorkspace', () => {
   })
 })
 
+// ── excludePaths enforcement — broad-include / narrow-exclude ────────────────
+//
+// Regression tests for the dogfood-discovered defect: excludePaths was stored
+// in the contract but never applied in buildSanitizedWorkspace or
+// previewSanitization. A broad includePath like **/*.py would capture the
+// entire virtualenv even when .venv/** appeared in excludePaths.
+
+describe('buildSanitizedWorkspace — excludePaths wins over includePaths', () => {
+  let tmpSource: string
+  let tmpDest: string
+
+  beforeEach(() => {
+    tmpSource = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-exclude-src-'))
+    tmpDest = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-exclude-dest-'))
+
+    // Project source files
+    fs.mkdirSync(path.join(tmpSource, 'mypackage'), { recursive: true })
+    fs.writeFileSync(path.join(tmpSource, 'mypackage', 'main.py'), 'x = 1')
+    fs.writeFileSync(path.join(tmpSource, 'pyproject.toml'), '[project]')
+
+    // .venv directory with nested .py files (simulating a virtualenv)
+    fs.mkdirSync(path.join(tmpSource, '.venv', 'lib', 'site-packages', 'requests'), { recursive: true })
+    fs.writeFileSync(path.join(tmpSource, '.venv', 'lib', 'site-packages', 'requests', 'api.py'), '# requests')
+    fs.writeFileSync(path.join(tmpSource, '.venv', 'lib', 'site-packages', 'requests', 'models.py'), '# models')
+
+    // __pycache__ directory
+    fs.mkdirSync(path.join(tmpSource, 'mypackage', '__pycache__'), { recursive: true })
+    fs.writeFileSync(path.join(tmpSource, 'mypackage', '__pycache__', 'main.cpython-312.pyc'), 'binary')
+
+    // logs directory
+    fs.mkdirSync(path.join(tmpSource, 'logs'), { recursive: true })
+    fs.writeFileSync(path.join(tmpSource, 'logs', 'run.log'), 'log output')
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpSource, { recursive: true, force: true })
+    fs.rmSync(tmpDest, { recursive: true, force: true })
+  })
+
+  const makeContract = (src: string): ProjectContract => ({
+    projectId: 'exclude-test',
+    sourcePath: src,
+    includePaths: ['**/*.py', 'pyproject.toml'],
+    excludePaths: ['.venv/**', '**/__pycache__/**', 'logs/**'],
+    denyIfPresentAfterCopy: ['.env'],
+    workspaceMode: 'sanitized_copy_only',
+    allowBash: false,
+    realProjectMounted: false,
+  })
+
+  it('copies project .py files that are not in excluded directories', () => {
+    const { manifest } = buildSanitizedWorkspace(makeContract(tmpSource), tmpDest)
+    const paths = manifest.files.map(f => f.relativePath)
+    expect(paths).toContain('mypackage/main.py')
+  })
+
+  it('does not copy .venv/ .py files even though **/*.py includes them', () => {
+    const { manifest } = buildSanitizedWorkspace(makeContract(tmpSource), tmpDest)
+    const paths = manifest.files.map(f => f.relativePath)
+    expect(paths).not.toContain('.venv/lib/site-packages/requests/api.py')
+    expect(paths).not.toContain('.venv/lib/site-packages/requests/models.py')
+  })
+
+  it('does not copy __pycache__ files', () => {
+    const { manifest } = buildSanitizedWorkspace(makeContract(tmpSource), tmpDest)
+    const paths = manifest.files.map(f => f.relativePath)
+    expect(paths.some(p => p.includes('__pycache__'))).toBe(false)
+  })
+
+  it('does not copy logs/ files', () => {
+    const { manifest } = buildSanitizedWorkspace(makeContract(tmpSource), tmpDest)
+    const paths = manifest.files.map(f => f.relativePath)
+    expect(paths).not.toContain('logs/run.log')
+  })
+
+  it('snapshot contains only the project source files', () => {
+    const { manifest } = buildSanitizedWorkspace(makeContract(tmpSource), tmpDest)
+    const paths = manifest.files.map(f => f.relativePath)
+    // Only mypackage/main.py and pyproject.toml — no venv noise
+    expect(paths.length).toBe(2)
+    expect(paths).toContain('mypackage/main.py')
+    expect(paths).toContain('pyproject.toml')
+  })
+})
+
+// ── previewSanitization — excludePaths enforcement ────────────────────────────
+
+describe('previewSanitization — excludePaths wins over includePaths', () => {
+  let tmpSource: string
+
+  beforeEach(() => {
+    tmpSource = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-preview-exclude-'))
+
+    fs.mkdirSync(path.join(tmpSource, 'src'), { recursive: true })
+    fs.writeFileSync(path.join(tmpSource, 'src', 'app.py'), 'app = 1')
+
+    fs.mkdirSync(path.join(tmpSource, '.venv', 'lib'), { recursive: true })
+    fs.writeFileSync(path.join(tmpSource, '.venv', 'lib', 'requests.py'), '# dep')
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpSource, { recursive: true, force: true })
+  })
+
+  it('excludes .venv/ .py from preview includedFiles when .venv/** is in excludePaths', async () => {
+    const { previewSanitization } = await import('../src/projects/preview-sanitization.js')
+    const contract: ProjectContract = {
+      projectId: 'preview-test',
+      sourcePath: tmpSource,
+      includePaths: ['**/*.py'],
+      excludePaths: ['.venv/**'],
+      denyIfPresentAfterCopy: [],
+      workspaceMode: 'sanitized_copy_only',
+      allowBash: false,
+      realProjectMounted: false,
+    }
+    const preview = previewSanitization(contract)
+    expect(preview.includedFiles).toContain('src/app.py')
+    expect(preview.includedFiles).not.toContain('.venv/lib/requests.py')
+  })
+})
+
 // ── validateSanitizedWorkspace tests ───────────────────────────────────────
 
 describe('validateSanitizedWorkspace', () => {
