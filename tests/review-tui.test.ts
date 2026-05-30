@@ -947,3 +947,98 @@ describe('printReviewTui — terminationNote rendered in output', () => {
     expect(all).not.toContain('Warning')
   })
 })
+
+// ── parseDiff — new/modified/deleted/mixed file count regression ──────────────
+//
+// Regression for the --- a/ → +++ b/ fix. New-file hunks open with
+// "--- /dev/null" (no "a/" prefix), so the old regex undercounted them.
+// The fix uses "+++ b/" which matches both modified and new-file hunks.
+
+describe('parseDiff — new/modified/deleted/mixed file counts', () => {
+  let tmpBase: string
+  let artifactDir: string
+
+  beforeEach(() => {
+    tmpBase = makeTempDir()
+    artifactDir = makeRunDir(tmpBase, 'diff-test', 'pp-run-difftest')
+    writeArtifacts(artifactDir, {
+      task: 'diff count regression test',
+      classification: { terminationReason: 'COMPLETED', patchEligibleForApplication: true,
+        readCount: 1, writeCount: 1, checkCount: 1, finalizeAttempted: true,
+        artifactsComplete: true, repeatedCheckFailures: false },
+    })
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpBase, { recursive: true, force: true })
+  })
+
+  it('new-file hunk (--- /dev/null) counts as 1 changed file', () => {
+    writeArtifacts(artifactDir, {
+      patchDiff: [
+        '--- /dev/null',
+        '+++ b/tests/POWERPLANT_AUDIT.md',
+        '@@ -0,0 +1,3 @@',
+        '+# Audit',
+        '+',
+        '+Findings here.',
+      ].join('\n'),
+    })
+    const state = buildReviewRenderState('pp-run-difftest', artifactDir)
+    expect(state.diff.files).toBe(1)
+    expect(state.diff.linesAdded).toBe(3)
+  })
+
+  it('modified-file hunk (--- a/ +++ b/) counts as 1 changed file', () => {
+    writeArtifacts(artifactDir, {
+      patchDiff: [
+        '--- a/src/status.js',
+        '+++ b/src/status.js',
+        '@@ -1,2 +1,3 @@',
+        ' export function a() {}',
+        '+export function b() {}',
+        '-export function old() {}',
+      ].join('\n'),
+    })
+    const state = buildReviewRenderState('pp-run-difftest', artifactDir)
+    expect(state.diff.files).toBe(1)
+    expect(state.diff.linesAdded).toBe(1)
+    expect(state.diff.linesRemoved).toBe(1)
+  })
+
+  it('deleted-file hunk (+++ /dev/null) is not counted — powerplant patches never delete files', () => {
+    writeArtifacts(artifactDir, {
+      patchDiff: [
+        '--- a/src/old.js',
+        '+++ /dev/null',
+        '@@ -1,2 +0,0 @@',
+        '-export function gone() {}',
+        '-export function also() {}',
+      ].join('\n'),
+    })
+    const state = buildReviewRenderState('pp-run-difftest', artifactDir)
+    // +++ /dev/null has no b/ prefix — file count is 0 (powerplant patches add/modify only)
+    expect(state.diff.files).toBe(0)
+    expect(state.diff.linesRemoved).toBe(2)
+  })
+
+  it('mixed diff: 1 new + 1 modified file counts as 2', () => {
+    writeArtifacts(artifactDir, {
+      patchDiff: [
+        '--- /dev/null',
+        '+++ b/tests/POWERPLANT_AUDIT.md',
+        '@@ -0,0 +1,2 @@',
+        '+# Audit',
+        '+Added.',
+        '--- a/docs/POWERPLANT_DOGFOOD_NOTES.md',
+        '+++ b/docs/POWERPLANT_DOGFOOD_NOTES.md',
+        '@@ -1,1 +1,2 @@',
+        ' Existing.',
+        '+New line.',
+      ].join('\n'),
+    })
+    const state = buildReviewRenderState('pp-run-difftest', artifactDir)
+    expect(state.diff.files).toBe(2)
+    expect(state.diff.linesAdded).toBe(3)
+  })
+})
