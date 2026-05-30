@@ -60,13 +60,18 @@ describe('previewSanitization', () => {
     expect(preview.includedFiles).toContain('.powerplant/POLICY.yaml')
   })
 
-  it('excludes files not in includePaths', () => {
+  it('excludes files not in includePaths — excluded dirs are pruned entirely', () => {
     const contract = { ...SPRINT4A_PILOT_CONTRACT, sourcePath: tempProjectDir }
     const preview = previewSanitization(contract)
 
+    // .env is a file (not a dir), traversed and excluded by excludePaths.
     expect(preview.excludedFiles).toContain('.env')
-    expect(preview.excludedFiles).toContain('private/secret.txt')
-    expect(preview.excludedFiles).toContain('deployment/release.txt')
+
+    // private/** and deployment/** are in excludePaths — these directories are pruned
+    // at walk time (never traversed). Their contents do not appear in includedFiles.
+    // This is the security-relevant property: they cannot enter the snapshot.
+    expect(preview.includedFiles).not.toContain('private/secret.txt')
+    expect(preview.includedFiles).not.toContain('deployment/release.txt')
   })
 
   it('never includes excluded file content in the preview', () => {

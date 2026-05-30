@@ -132,10 +132,14 @@ describe('createVerificationWorkspace: source manifest', () => {
 
 describe('createVerificationWorkspace: FAIL_BOUNDARY on bad workspace', () => {
   it('throws FAIL_BOUNDARY if validated workspace contains forbidden content', () => {
-    // Force a contract where .env is in includePaths (bad config) but also in denyIfPresentAfterCopy
+    // Force a contract where .env is in includePaths AND denyIfPresentAfterCopy,
+    // but NOT in excludePaths — so it actually enters the workspace.
+    // excludePaths wins over includePaths, so .env must be absent from excludePaths
+    // for this to reach the FAIL_BOUNDARY boundary check.
     const badContract: LoadedProjectContract = {
       ...makeContract(sourceDir),
       includePaths: ['package.json', '.env', '.powerplant/**', 'src/**'],
+      excludePaths: ['node_modules/**'],  // .env intentionally absent so it enters workspace
       denyIfPresentAfterCopy: ['.env'],
     }
     expect(() => createVerificationWorkspace(badContract)).toThrow(/FAIL_BOUNDARY/)

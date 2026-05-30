@@ -63,7 +63,19 @@ function sha256ofFile(filePath: string): string {
   return crypto.createHash('sha256').update(content).digest('hex')
 }
 
-function walkDir(dir: string, base: string, includePaths: string[], results: string[]): void {
+function isDirectoryExcluded(relDirPath: string, excludePaths: string[]): boolean {
+  // Test relDirPath + '/' so that dir/** patterns match the directory itself.
+  // e.g. ".venv/**" regex is ^\.venv\/.*$ which matches ".venv/" (empty tail is ok).
+  return excludePaths.some(p => matchesGlob(relDirPath + '/', p))
+}
+
+function walkDir(
+  dir: string,
+  base: string,
+  includePaths: string[],
+  excludePaths: string[],
+  results: string[],
+): void {
   for (const entry of fs.readdirSync(dir)) {
     const fullPath = path.join(dir, entry)
     const relPath = path.relative(base, fullPath).replace(/\\/g, '/')
@@ -72,13 +84,18 @@ function walkDir(dir: string, base: string, includePaths: string[], results: str
       // Only reject symlinks that would enter the sanitized snapshot.
       // Symlinks inside excluded directories (e.g. node_modules/.bin/) are skipped.
       const wouldInclude = includePaths.some(p => matchesGlob(relPath, p))
+        && !excludePaths.some(p => matchesGlob(relPath, p))
       if (wouldInclude) {
         throw new Error(`Symlink rejected: ${relPath}`)
       }
       continue
     }
     if (stat.isDirectory()) {
-      walkDir(fullPath, base, includePaths, results)
+      // Prune entire directory trees matched by an exclude pattern — avoids
+      // walking .venv/ (18k+ files) or node_modules/ even when **/*.py is broad.
+      if (!isDirectoryExcluded(relPath, excludePaths)) {
+        walkDir(fullPath, base, includePaths, excludePaths, results)
+      }
     } else {
       results.push(fullPath)
     }
@@ -109,11 +126,14 @@ export function buildSanitizedWorkspace(
     throw new Error(`Source path does not exist: ${sourcePath}`)
   }
 
-  // Collect all files in the source directory
+  // Collect all files reachable from the source directory.
+  // walkDir already prunes directories matched by excludePaths for performance.
   const allFiles: string[] = []
-  walkDir(sourcePath, sourcePath, contract.includePaths, allFiles)
+  walkDir(sourcePath, sourcePath, contract.includePaths, contract.excludePaths, allFiles)
 
-  // Copy only files matching includePaths
+  // Copy files that are included AND not excluded.
+  // excludePaths wins over includePaths — this is the enforce step for any
+  // files that survived directory pruning but still match an exclude pattern.
   const copiedFiles: WorkspaceFile[] = []
 
   for (const fullPath of allFiles) {
@@ -121,6 +141,9 @@ export function buildSanitizedWorkspace(
 
     const included = contract.includePaths.some(p => matchesGlob(relativePath, p))
     if (!included) continue
+
+    const excluded = contract.excludePaths.some(p => matchesGlob(relativePath, p))
+    if (excluded) continue
 
     // Safety checks only run for files that will actually enter the snapshot.
     assertSafePath(relativePath, sourcePath)
