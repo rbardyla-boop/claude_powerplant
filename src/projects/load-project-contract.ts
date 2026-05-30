@@ -179,9 +179,9 @@ function loadVerifyYaml(verifyPath: string): {
 
   const doc = raw as RawVerifyYaml
 
-  // Optional verificationProfile field
+  // Optional verificationProfile field. null is treated as absent (no profile).
   let verificationProfile: string | null = null
-  if (doc.verificationProfile !== undefined) {
+  if (doc.verificationProfile !== undefined && doc.verificationProfile !== null) {
     if (typeof doc.verificationProfile !== 'string' || !doc.verificationProfile.trim()) {
       throw new Error(
         "VERIFY.yaml: 'verificationProfile' must be a non-empty string when present",

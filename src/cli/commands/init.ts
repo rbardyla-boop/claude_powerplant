@@ -68,12 +68,12 @@ export async function cmdInit(rest: string[]): Promise<void> {
   const verifyPath = path.join(powerplantDir, 'VERIFY.yaml')
 
   if (!force) {
-    const blocked =
-      fs.existsSync(powerplantDir) ||
-      fs.existsSync(policyPath) ||
-      fs.existsSync(verifyPath)
+    // Block only when generated files already exist — an empty .powerplant/ dir
+    // (e.g. from a partial init or a state-only directory) is fine to init into.
+    const blocked = fs.existsSync(policyPath) || fs.existsSync(verifyPath)
     if (blocked) {
-      console.error('Error: .powerplant/ already exists. Use --force to overwrite generated files.')
+      console.error('Error: .powerplant/POLICY.yaml or VERIFY.yaml already exists.')
+      console.error('       Use --force to overwrite the generated files.')
       process.exit(1)
     }
   }

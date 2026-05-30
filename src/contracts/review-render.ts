@@ -3,6 +3,8 @@ export interface ReviewRenderState {
   projectId: string
   task: string
   overallStatus: 'PASS' | 'FAIL' | 'RISK' | 'UNKNOWN'
+  /** Populated when the run terminated without producing complete artifacts. */
+  terminationNote: string | null
   diff: {
     files: number
     linesAdded: number

@@ -20,8 +20,8 @@ interface PolicyPaths {
   allowedWritePaths: string[]
 }
 
-// .powerplant contract files are always readable so the agent can reference them
-const POWERPLANT_READ = ['.powerplant/POLICY.yaml', '.powerplant/VERIFY.yaml']
+// Always-readable paths for every stack: contract files + top-level README.
+const POWERPLANT_READ = ['.powerplant/POLICY.yaml', '.powerplant/VERIFY.yaml', 'README.md']
 
 const STACK_PATHS: Record<StackId, PolicyPaths> = {
   'node-ts': {

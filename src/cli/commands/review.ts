@@ -140,7 +140,17 @@ export function buildReviewRenderState(runId: string, artifactDir: string): Revi
   const overallStatus = computeOverallStatus(checks, risks, classification, verificationMd)
   const nextAction = computeNextAction(overallStatus, runId)
 
-  return { runId, projectId, task, overallStatus, diff, checks, risks, nextAction }
+  let terminationNote: string | null = null
+  if (classification && !classification.artifactsComplete) {
+    const labels: Record<string, string> = {
+      FAILED_TOOL_BUDGET_EXHAUSTED: 'tool budget exhausted before finalization',
+      FAILED_INCOMPLETE_AGENT_RUN: 'agent run did not complete',
+    }
+    const label = labels[classification.terminationReason] ?? classification.terminationReason
+    terminationNote = `Run terminated (${label}) — no PATCH.diff produced`
+  }
+
+  return { runId, projectId, task, overallStatus, terminationNote, diff, checks, risks, nextAction }
 }
 
 // ── Command ───────────────────────────────────────────────────────────────────
