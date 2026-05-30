@@ -1,6 +1,7 @@
 import yaml from 'js-yaml'
 import type { StackId } from './detect-stack.js'
 import { stackToProfile } from './detect-stack.js'
+import { listKnownProfileIds } from '../verification/verification-profiles.js'
 
 interface CheckDef {
   command: string
@@ -27,13 +28,23 @@ const STACK_CHECKS: Record<StackId, Record<string, CheckDef>> = {
 
 /**
  * Produce a VERIFY.yaml string for the given stack.
- * Uses the stack's registered verification profile and default checks.
- * Note: generic produces empty checks — loadProjectContract will require the
- * user to add at least one check before the contract is fully valid.
+ * Only emits verificationProfile when a capsule image actually exists for it.
+ * Non-capsule stacks fall back to plain subprocess execution (verificationProfile omitted).
  */
 export function generateVerifyYaml(stack: StackId): string {
-  const verificationProfile = stackToProfile(stack)
+  const profileId = stackToProfile(stack)
+  const knownProfiles = listKnownProfileIds()
   const checks = STACK_CHECKS[stack]
-  const doc: Record<string, unknown> = { verificationProfile, checks }
+
+  const doc: Record<string, unknown> = {}
+
+  if (profileId !== null && knownProfiles.includes(profileId)) {
+    doc['verificationProfile'] = profileId
+  }
+  // No verificationProfile → checks run as plain subprocesses (no Docker capsule).
+  // A capsule image for this stack is not yet shipped. Remove this comment once added.
+
+  doc['checks'] = checks
+
   return yaml.dump(doc, { lineWidth: 120 })
 }

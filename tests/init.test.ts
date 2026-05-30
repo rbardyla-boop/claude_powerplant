@@ -54,10 +54,10 @@ describe('generatePolicyYaml', () => {
     expect(inc).toContain('tsconfig.json')
   })
 
-  it('python policy has src/**, tests/**, pyproject.toml in includePaths', () => {
+  it('python policy has **/*.py, tests/**, pyproject.toml in includePaths', () => {
     const doc = yaml.load(generatePolicyYaml('python', 'test-id')) as Record<string, unknown>
     const inc = doc['includePaths'] as string[]
-    expect(inc).toContain('src/**')
+    expect(inc).toContain('**/*.py')
     expect(inc).toContain('tests/**')
     expect(inc).toContain('pyproject.toml')
   })
@@ -99,9 +99,9 @@ describe('generateVerifyYaml', () => {
     expect(checks['typecheck']?.command).toBe('npx tsc --noEmit')
   })
 
-  it('python generates subprocess-python-v1 profile', () => {
+  it('python omits verificationProfile (no capsule shipped)', () => {
     const doc = yaml.load(generateVerifyYaml('python')) as Record<string, unknown>
-    expect(doc['verificationProfile']).toBe('subprocess-python-v1')
+    expect(doc['verificationProfile']).toBeUndefined()
   })
 
   it('python generates pytest check', () => {
@@ -110,9 +110,9 @@ describe('generateVerifyYaml', () => {
     expect(checks['test']?.command).toBe('pytest')
   })
 
-  it('go generates subprocess-go-v1 profile', () => {
+  it('go omits verificationProfile (no capsule shipped)', () => {
     const doc = yaml.load(generateVerifyYaml('go')) as Record<string, unknown>
-    expect(doc['verificationProfile']).toBe('subprocess-go-v1')
+    expect(doc['verificationProfile']).toBeUndefined()
   })
 
   it('go generates go test ./... check', () => {
@@ -121,9 +121,9 @@ describe('generateVerifyYaml', () => {
     expect(checks['test']?.command).toBe('go test ./...')
   })
 
-  it('rust generates subprocess-generic-v1 profile', () => {
+  it('rust omits verificationProfile (no capsule shipped)', () => {
     const doc = yaml.load(generateVerifyYaml('rust')) as Record<string, unknown>
-    expect(doc['verificationProfile']).toBe('subprocess-generic-v1')
+    expect(doc['verificationProfile']).toBeUndefined()
   })
 
   it('rust generates cargo test check', () => {
@@ -132,9 +132,9 @@ describe('generateVerifyYaml', () => {
     expect(checks['test']?.command).toBe('cargo test')
   })
 
-  it('generic fallback generates subprocess-generic-v1 profile', () => {
+  it('generic fallback omits verificationProfile (no capsule shipped)', () => {
     const doc = yaml.load(generateVerifyYaml('generic')) as Record<string, unknown>
-    expect(doc['verificationProfile']).toBe('subprocess-generic-v1')
+    expect(doc['verificationProfile']).toBeUndefined()
   })
 
   it('generic fallback generates empty checks (user must add checks)', () => {
@@ -309,7 +309,7 @@ describe('cmdInit: stack detection', () => {
       fs.writeFileSync(path.join(dir, 'pyproject.toml'), '[project]')
       await cmdInit([dir])
       const v = yaml.load(fs.readFileSync(path.join(dir, '.powerplant', 'VERIFY.yaml'), 'utf-8')) as Record<string, unknown>
-      expect(v['verificationProfile']).toBe('subprocess-python-v1')
+      expect(v['verificationProfile']).toBeUndefined()
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -322,7 +322,7 @@ describe('cmdInit: stack detection', () => {
       fs.writeFileSync(path.join(dir, 'go.mod'), 'module example.com/app')
       await cmdInit([dir])
       const v = yaml.load(fs.readFileSync(path.join(dir, '.powerplant', 'VERIFY.yaml'), 'utf-8')) as Record<string, unknown>
-      expect(v['verificationProfile']).toBe('subprocess-go-v1')
+      expect(v['verificationProfile']).toBeUndefined()
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -337,7 +337,7 @@ describe('cmdInit: stack detection', () => {
       fs.writeFileSync(path.join(dir, '.powerplant', 'POLICY.yaml'), generatePolicyYaml('generic', projectId))
       fs.writeFileSync(path.join(dir, '.powerplant', 'VERIFY.yaml'), generateVerifyYaml('generic'))
       const v = yaml.load(fs.readFileSync(path.join(dir, '.powerplant', 'VERIFY.yaml'), 'utf-8')) as Record<string, unknown>
-      expect(v['verificationProfile']).toBe('subprocess-generic-v1')
+      expect(v['verificationProfile']).toBeUndefined()
       expect(v['checks']).toEqual({})
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
@@ -353,7 +353,7 @@ describe('cmdInit: stack detection', () => {
       // so it should pass
       await cmdInit([dir])
       const v = yaml.load(fs.readFileSync(path.join(dir, '.powerplant', 'VERIFY.yaml'), 'utf-8')) as Record<string, unknown>
-      expect(v['verificationProfile']).toBe('subprocess-generic-v1')
+      expect(v['verificationProfile']).toBeUndefined()
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -366,7 +366,7 @@ describe('cmdInit: stack detection', () => {
       fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"my-app"}')
       await cmdInit(['--stack', 'python', dir])
       const v = yaml.load(fs.readFileSync(path.join(dir, '.powerplant', 'VERIFY.yaml'), 'utf-8')) as Record<string, unknown>
-      expect(v['verificationProfile']).toBe('subprocess-python-v1')
+      expect(v['verificationProfile']).toBeUndefined()
       const checks = v['checks'] as Record<string, { command: string }>
       expect(checks['test']?.command).toBe('pytest')
     } finally {

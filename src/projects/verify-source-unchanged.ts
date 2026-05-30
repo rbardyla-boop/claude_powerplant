@@ -58,6 +58,11 @@ function walkAllRelative(dir: string): string[] {
     for (const entry of fs.readdirSync(current)) {
       const abs = path.join(current, entry)
       const stat = fs.lstatSync(abs)
+      if (stat.isSymbolicLink()) {
+        // Skip symlinks — consistent with captureSourceManifest; prevents false-positive
+        // "Original repo modified" when dir-symlinks (e.g. .venv/lib64) are present.
+        continue
+      }
       if (stat.isDirectory()) {
         walk(abs)
       } else {

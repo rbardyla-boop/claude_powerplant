@@ -30,9 +30,10 @@ const STACK_PATHS: Record<StackId, PolicyPaths> = {
     allowedWritePaths: ['src/**', 'tests/**'],
   },
   python: {
-    includePaths: ['src/**', 'tests/**', 'pyproject.toml'],
-    allowedReadPaths: ['src/**', 'tests/**', 'pyproject.toml', ...POWERPLANT_READ],
-    allowedWritePaths: ['src/**', 'tests/**'],
+    // Uses **/*.py so both src/-layout and flat-package repos are covered.
+    includePaths: ['**/*.py', 'tests/**', 'pyproject.toml', 'requirements.txt', 'requirements*.txt', 'setup.cfg'],
+    allowedReadPaths: ['**/*.py', 'tests/**', 'pyproject.toml', 'requirements.txt', 'requirements*.txt', 'setup.cfg', ...POWERPLANT_READ],
+    allowedWritePaths: ['**/*.py', 'tests/**'],
   },
   go: {
     includePaths: ['**/*.go', 'go.mod', 'go.sum'],

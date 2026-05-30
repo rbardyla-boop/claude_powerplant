@@ -37,6 +37,10 @@ function walkFiles(dir: string, base: string): Array<{ rel: string; abs: string 
   for (const entry of fs.readdirSync(dir)) {
     const abs = path.join(dir, entry)
     const stat = fs.lstatSync(abs)
+    if (stat.isSymbolicLink()) {
+      // Skip symlinks — readFileSync follows them and throws EISDIR for dir-symlinks.
+      continue
+    }
     if (stat.isDirectory()) {
       results.push(...walkFiles(abs, base))
     } else {
