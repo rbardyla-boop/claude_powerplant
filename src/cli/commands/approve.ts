@@ -56,21 +56,51 @@ function gitCreateBranch(branchName: string, projectPath: string): boolean {
 }
 
 /**
- * Apply a patch file to both the working tree and index using --index.
- * This stages exactly the files touched by the patch and nothing else,
- * preventing pre-existing working-tree changes from being swept into the
- * commit by a subsequent "git add -A".
+ * Extract the set of file paths touched by a unified diff.
+ * Reads `+++ b/<path>` lines; handles new files (`+++ b/<path>`) and
+ * modifications, but not deletions (those also appear as `--- a/<path>`
+ * which we skip to avoid double-counting).
+ */
+function patchedFiles(patchPath: string): string[] {
+  const content = fs.readFileSync(patchPath, 'utf-8')
+  const paths = new Set<string>()
+  for (const line of content.split('\n')) {
+    if (line.startsWith('+++ b/')) {
+      paths.add(line.slice(6).trim())
+    }
+  }
+  return [...paths]
+}
+
+/**
+ * Apply a patch to the working tree (not the index) and then stage exactly
+ * the files listed in the patch using `git add -- <files>`.
  *
- * --whitespace=nowarn suppresses trailing-whitespace errors so that
- * generated text content (Markdown, docs) with trailing spaces applies
- * cleanly regardless of the project's core.whitespace setting.
+ * This is correct for both:
+ *   - untracked files that exist in the working tree (git apply --index
+ *     fails because they are absent from the index)
+ *   - new files that were never tracked at all
+ *
+ * --whitespace=nowarn suppresses trailing-whitespace errors so generated
+ * text content (Markdown) with trailing spaces applies cleanly.
  */
 function gitApplyPatch(patchPath: string, projectPath: string): { ok: boolean; stderr: string } {
-  const r = spawnSync('git', ['apply', '--index', '--whitespace=nowarn', patchPath], {
+  const apply = spawnSync('git', ['apply', '--whitespace=nowarn', patchPath], {
     cwd: projectPath,
     encoding: 'utf-8',
   })
-  return { ok: r.status === 0 && !r.error, stderr: r.stderr ?? '' }
+  if (apply.status !== 0 || apply.error) {
+    return { ok: false, stderr: apply.stderr ?? String(apply.error ?? '') }
+  }
+
+  const files = patchedFiles(patchPath)
+  if (files.length === 0) return { ok: true, stderr: '' }
+
+  const add = spawnSync('git', ['add', '--', ...files], {
+    cwd: projectPath,
+    encoding: 'utf-8',
+  })
+  return { ok: add.status === 0 && !add.error, stderr: add.stderr ?? '' }
 }
 
 function gitCommitWithFile(msgFile: string, projectPath: string): { ok: boolean; stderr: string } {
