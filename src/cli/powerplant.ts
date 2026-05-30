@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { fileURLToPath } from 'url'
 import path from 'path'
+import { cmdInit } from './commands/init.js'
 import { cmdInspect } from './commands/inspect.js'
 import { cmdRun } from './commands/run.js'
 import { cmdReview } from './commands/review.js'
@@ -22,15 +23,17 @@ loadPowerplantEnv(pkgRoot)
 
 function printUsage(): void {
   console.log('Usage:')
-  console.log('  powerplant setup [--repair]')
+  console.log('  powerplant init    [project-path] [--stack <stack>] [--yes] [--force]')
+  console.log('  powerplant setup   [--repair]')
   console.log('  powerplant inspect <project-path>')
   console.log('  powerplant verify  <project-path>')
   console.log('  powerplant doctor  [project-path]')
-  console.log('  powerplant run [--yes] <project-path> "<task>"')
-  console.log('  powerplant review <run-id>')
-  console.log('  powerplant skill <subcommand>')
+  console.log('  powerplant run     [--yes] <project-path> "<task>"')
+  console.log('  powerplant review  <run-id>')
+  console.log('  powerplant skill   <subcommand>')
   console.log()
   console.log('Commands:')
+  console.log('  init     Generate .powerplant/POLICY.yaml and VERIFY.yaml for a project')
   console.log('  setup    Provision or migrate runtime resources; --repair validates via live API')
   console.log('  inspect  Show what Claude would see/modify without starting a session')
   console.log('  verify   Run approved checks in an isolated workspace (no agent, no network)')
@@ -43,6 +46,11 @@ function printUsage(): void {
 const [, , command, ...rest] = process.argv
 
 switch (command) {
+  case 'init': {
+    await cmdInit(rest)
+    break
+  }
+
   case 'setup': {
     const repair = rest.includes('--repair')
     await cmdSetup(repair)
