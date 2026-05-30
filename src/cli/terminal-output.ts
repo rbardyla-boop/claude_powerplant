@@ -2,6 +2,7 @@ import type { InspectionReport } from '../contracts/inspection-report.js'
 import type { SanitizationPreview } from '../projects/preview-sanitization.js'
 import type { VerificationReport, CheckResult } from '../contracts/verification-preflight-report.js'
 import type { RunClassification } from '../contracts/project-tool-contracts.js'
+import type { ReviewRenderState } from '../contracts/review-render.js'
 import { parseVerificationReport } from './parse-verification-report.js'
 
 export interface DoctorReportOptions {
@@ -423,4 +424,126 @@ export function printReviewReport(opts: {
   console.log()
   console.log('Artifacts:')
   console.log(`  ${artifactDir}/`)
+}
+
+// ── Review TUI ────────────────────────────────────────────────────────────────
+
+function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*m/g, '')
+}
+
+function printReviewTuiCompact(state: ReviewRenderState): void {
+  console.log(`Run:     ${state.runId}`)
+  console.log(`Status:  ${state.overallStatus}`)
+  console.log(`Project: ${state.projectId}`)
+  console.log(`Task:    ${state.task}`)
+  console.log(`Diff:    ${state.diff.files} files +${state.diff.linesAdded}/-${state.diff.linesRemoved}`)
+  const pass = state.checks.filter(c => c.status === 'pass').length
+  const fail = state.checks.filter(c => c.status === 'fail').length
+  console.log(`Checks:  ${pass} pass, ${fail} fail`)
+  console.log(`Risks:   ${state.risks.length}`)
+  console.log(`Next:    ${state.nextAction}`)
+}
+
+export function printReviewTui(state: ReviewRenderState): void {
+  const termWidth = process.stdout.columns ?? 80
+
+  if (termWidth < 60) {
+    printReviewTuiCompact(state)
+    return
+  }
+
+  const noColor = process.env['NO_COLOR'] !== undefined
+  const W = Math.min(termWidth, 100)
+  const innerW = W - 4
+
+  const c = (code: string, text: string): string =>
+    noColor ? text : `\x1b[${code}m${text}\x1b[0m`
+  const green = (t: string) => c('32', t)
+  const red = (t: string) => c('31', t)
+  const yellow = (t: string) => c('33', t)
+  const dim = (t: string) => c('2', t)
+
+  const statusStyled = (s: ReviewRenderState['overallStatus']): string => {
+    switch (s) {
+      case 'PASS': return green('PASS')
+      case 'FAIL': return red('FAIL')
+      case 'RISK': return yellow('RISK')
+      default: return dim('UNKNOWN')
+    }
+  }
+
+  const row = (content: string): string => {
+    const vlen = stripAnsi(content).length
+    const pad = Math.max(0, innerW - vlen)
+    return `│ ${content}${' '.repeat(pad)} │`
+  }
+
+  const section = (label: string): string => {
+    const prefix = `─ ${label} `
+    const fill = Math.max(1, W - 2 - prefix.length - 1)
+    return `├${prefix}${'─'.repeat(fill)}┤`
+  }
+
+  const lines: string[] = []
+
+  // Header
+  const runSuffix = ` run-id: ${state.runId.slice(0, 30)} ─`
+  const headerFill = Math.max(1, W - 2 - 20 - runSuffix.length)
+  lines.push(`┌─ Powerplant Review ${'─'.repeat(headerFill)}${runSuffix}┐`)
+
+  // Project / Task / Status badge
+  const badge = `[  ${statusStyled(state.overallStatus)}  ]`
+  const badgePlain = `[  ${state.overallStatus}  ]`
+  const projectInfo = `Project: ${state.projectId.slice(0, 20)}   Task: "${state.task.slice(0, 28)}"`
+  const projPad = Math.max(1, innerW - projectInfo.length - badgePlain.length)
+  lines.push(`│ ${projectInfo}${' '.repeat(projPad)}${badge} │`)
+
+  // Diff
+  lines.push(section('Diff'))
+  if (state.diff.files === 0 && !state.diff.raw.trim()) {
+    lines.push(row('(no diff)'))
+  } else {
+    lines.push(row(`${state.diff.files} file${state.diff.files !== 1 ? 's' : ''} changed  +${state.diff.linesAdded} / -${state.diff.linesRemoved}`))
+  }
+
+  // Checks
+  lines.push(section('Checks'))
+  if (state.checks.length === 0) {
+    lines.push(row('(no checks recorded)'))
+  } else {
+    for (const check of state.checks) {
+      const sym = check.status === 'pass'
+        ? (noColor ? '✓' : green('✓'))
+        : check.status === 'skip' ? '~'
+        : (noColor ? '✗' : red('✗'))
+      const exitPart = check.exitCode !== null ? `exit ${check.exitCode}` : '      '
+      const snippetPart = check.snippet ? `  ${check.snippet.slice(0, 30)}` : ''
+      lines.push(row(`${sym} ${check.name.padEnd(12)}${exitPart.padEnd(9)}${snippetPart}`))
+    }
+  }
+
+  // Risks
+  lines.push(section('Risks'))
+  if (state.risks.length === 0) {
+    lines.push(row('(none)'))
+  } else {
+    for (const risk of state.risks) {
+      const sevStyled = (risk.severity === 'CRITICAL' || risk.severity === 'HIGH')
+        ? (noColor ? risk.severity : red(risk.severity))
+        : risk.severity === 'MEDIUM'
+          ? (noColor ? risk.severity : yellow(risk.severity))
+          : dim(risk.severity)
+      lines.push(row(`[${sevStyled}] ${risk.finding.slice(0, Math.max(0, innerW - 12))}`))
+    }
+  }
+
+  // Next action
+  lines.push(section('Next'))
+  lines.push(row(state.nextAction.slice(0, innerW)))
+  lines.push(`└${'─'.repeat(W - 2)}┘`)
+
+  for (const line of lines) {
+    console.log(line)
+  }
 }

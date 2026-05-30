@@ -29,7 +29,7 @@ function printUsage(): void {
   console.log('  powerplant verify  <project-path>')
   console.log('  powerplant doctor  [project-path]')
   console.log('  powerplant run     [--yes] <project-path> "<task>"')
-  console.log('  powerplant review  <run-id>')
+  console.log('  powerplant review  <run-id> [--json] [--diff]')
   console.log('  powerplant skill   <subcommand>')
   console.log()
   console.log('Commands:')
@@ -109,13 +109,7 @@ switch (command) {
   }
 
   case 'review': {
-    const runId = rest[0]
-    if (!runId) {
-      console.error('Error: run-id is required.')
-      printUsage()
-      process.exit(1)
-    }
-    await cmdReview(runId)
+    await cmdReview(rest)
     break
   }
 
