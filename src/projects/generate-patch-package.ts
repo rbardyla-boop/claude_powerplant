@@ -45,10 +45,14 @@ async function generateFileDiff(
   workspaceFile: string,
   relPath: string,
 ): Promise<string> {
+  // For new files (no baseline), use /dev/null as the from-label so that
+  // git apply --index recognises the diff as a file addition rather than a
+  // modification of an existing index entry.
+  const fromLabel = baselineFile === '/dev/null' ? '/dev/null' : `a/${relPath}`
   try {
     const result = await execFileAsync('diff', [
       '-u',
-      '--label', `a/${relPath}`,
+      '--label', fromLabel,
       '--label', `b/${relPath}`,
       baselineFile,
       workspaceFile,
