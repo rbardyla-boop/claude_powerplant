@@ -108,6 +108,35 @@ Powerplant is appropriate for projects that meet all of the following:
 
 ---
 
+## Quickstart (Road to Usable v0.2)
+
+```bash
+# 1. Give your project a powerplant contract (auto-detects stack)
+powerplant init --yes
+
+# 2. Run a task — requires ANTHROPIC_API_KEY
+powerplant run . "small task"
+
+# 3. Review the result
+powerplant review <run-id>
+
+# 4. Pre-flight before applying
+powerplant approve <run-id> --dry-run
+
+# 5. Apply patch to a new branch
+powerplant approve <run-id>
+
+# 6. Start a session for follow-up work
+powerplant session create .
+
+# 7. Run a follow-up task in session context
+powerplant run --session <session-id> . "follow-up task"
+```
+
+See `docs/ROAD_TO_USABLE_STATUS.md` for the full step status and honest v0.2 boundary.
+
+---
+
 ## First Use
 
 ### 1. Give a project a `.powerplant/` contract

@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc --noEmit",
     "test": "vitest run",
+    "smoke:road-to-usable": "node --import=tsx scripts/smoke-road-to-usable.ts",
     "typecheck": "tsc --noEmit",
     "smoke:cloud": "node --env-file=.env --import=tsx src/cli/sprint1a-cloud-smoke.ts",
     "smoke:output": "node --env-file=.env --import=tsx src/cli/sprint1b-cloud-output.ts",
