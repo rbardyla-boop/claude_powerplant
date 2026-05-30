@@ -5,6 +5,7 @@ import { cmdInit } from './commands/init.js'
 import { cmdInspect } from './commands/inspect.js'
 import { cmdRun } from './commands/run.js'
 import { cmdReview } from './commands/review.js'
+import { cmdApprove } from './commands/approve.js'
 import { cmdVerify } from './commands/verify.js'
 import { cmdDoctor } from './commands/doctor.js'
 import { cmdSetup } from './commands/setup.js'
@@ -30,6 +31,7 @@ function printUsage(): void {
   console.log('  powerplant doctor  [project-path]')
   console.log('  powerplant run     [--yes] <project-path> "<task>"')
   console.log('  powerplant review  <run-id> [--json] [--diff]')
+  console.log('  powerplant approve <run-id> [--dry-run] [--pr]')
   console.log('  powerplant skill   <subcommand>')
   console.log()
   console.log('Commands:')
@@ -40,6 +42,7 @@ function printUsage(): void {
   console.log('  doctor   Show runtime status and configuration (no API call)')
   console.log('  run      Run a task on a sanitized copy and produce a patch')
   console.log('  review   Display artifacts from a completed run')
+  console.log('  approve  Apply a reviewed run to a git branch with evidence hash')
   console.log('  skill    Manage the Skill Reactor vault (import, test, promote, rollback)')
 }
 
@@ -110,6 +113,11 @@ switch (command) {
 
   case 'review': {
     await cmdReview(rest)
+    break
+  }
+
+  case 'approve': {
+    await cmdApprove(rest)
     break
   }
 
