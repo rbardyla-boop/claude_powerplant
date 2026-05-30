@@ -33,7 +33,10 @@ describe('generateProjectId', () => {
 describe('generatePolicyYaml', () => {
   const stacks: StackId[] = ['node-ts', 'python', 'go', 'rust', 'generic']
 
-  const REQUIRED_EXCLUDES = ['.git/**', 'node_modules/**', '.env', '.env.*', '**/*.key', '**/*.pem']
+  const REQUIRED_EXCLUDES = [
+    '**/.git/**', '**/node_modules/**', '.env', '.env.*', '**/*.key', '**/*.pem',
+    '**/.venv/**', '**/venv/**', '**/__pycache__/**', '**/.pytest_cache/**',
+  ]
 
   for (const stack of stacks) {
     describe(`stack: ${stack}`, () => {

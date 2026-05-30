@@ -4,12 +4,16 @@ import yaml from 'js-yaml'
 import type { StackId } from './detect-stack.js'
 
 const REQUIRED_EXCLUDES = [
-  '.git/**',
-  'node_modules/**',
+  '**/.git/**',
+  '**/node_modules/**',
   '.env',
   '.env.*',
   '**/*.key',
   '**/*.pem',
+  '**/.venv/**',
+  '**/venv/**',
+  '**/__pycache__/**',
+  '**/.pytest_cache/**',
 ]
 
 const DENY_IF_PRESENT = ['.env', '.git']
