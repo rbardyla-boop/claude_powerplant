@@ -5,6 +5,7 @@ import { listKnownProfileIds } from '../verification/verification-profiles.js'
 
 interface CheckDef {
   command: string
+  required?: boolean
 }
 
 // defaultChecks from the roadmap stack→config table
@@ -22,7 +23,12 @@ const STACK_CHECKS: Record<StackId, Record<string, CheckDef>> = {
     test: { command: 'go test ./...' },
   },
   rust: {
-    test: { command: 'cargo test' },
+    // --workspace ensures all crates in a multi-crate workspace are built and tested.
+    build: { command: 'cargo build --workspace' },
+    test: { command: 'cargo test --workspace' },
+    // Advisory: clippy and fmt are style/lint checks — failures are informational, not blocking.
+    clippy: { command: 'cargo clippy --workspace -- -D warnings', required: false },
+    format: { command: 'cargo fmt --check', required: false },
   },
   // generic: user must add checks — generated VERIFY.yaml will need editing
   generic: {},
