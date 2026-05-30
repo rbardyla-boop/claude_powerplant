@@ -22,7 +22,7 @@ function makeContract(dir: string): LoadedProjectContract {
     realProjectMounted: false,
     allowedReadPaths: ['src/**', 'package.json'],
     allowedWritePaths: ['src/tests/**'],
-    allowedChecks: { test: { command: 'npm test' } },
+    allowedChecks: { test: { command: 'npm test', required: true } },
     verificationProfile: null,
   }
 }

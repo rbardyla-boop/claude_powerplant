@@ -241,7 +241,7 @@ export async function generatePatchPackage(opts: {
       `### Check: \`${r.checkId}\`\n` +
       `Command: \`${r.command}\`\n` +
       `Exit code: ${r.exitCode ?? 'null'}\n` +
-      `Result: **${r.verdict}**\n` +
+      `Result: **${r.verdict}**${r.advisory ? ' _(advisory — does not block finalization)_' : ''}\n` +
       (r.stdoutTail ? `\`\`\`\n${r.stdoutTail}\n\`\`\`\n` : ''),
     )
     verReport =

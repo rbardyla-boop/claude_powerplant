@@ -301,7 +301,7 @@ describe('write path authorization', () => {
 describe('check authorization', () => {
   it('isCheckAuthorized denies a check not in VERIFY.yaml', async () => {
     const { isCheckAuthorized } = await import('../src/contracts/project-tool-contracts.js')
-    const checks = { test: { command: 'node --test' } }
+    const checks = { test: { command: 'node --test', required: true } }
     expect(isCheckAuthorized('test', checks)).toBe(true)
     expect(isCheckAuthorized('bash', checks)).toBe(false)
     expect(isCheckAuthorized('npm install', checks)).toBe(false)
@@ -506,6 +506,87 @@ checks:
     )
     try {
       expect(() => loadProjectContract(dir)).toThrow(/check ID/)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── Advisory check (required: false) in VERIFY.yaml ─────────────────────────
+
+describe('advisory checks — required field in VERIFY.yaml', () => {
+  it('omitting required defaults to required:true (existing behavior unchanged)', () => {
+    const dir = makeFixtureDir(VALID_POLICY, `
+checks:
+  test:
+    command: "node --test"
+`)
+    try {
+      const contract = loadProjectContract(dir)
+      expect(contract.allowedChecks['test']?.required).toBe(true)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('explicit required:true behaves the same as omitted', () => {
+    const dir = makeFixtureDir(VALID_POLICY, `
+checks:
+  test:
+    command: "node --test"
+    required: true
+`)
+    try {
+      const contract = loadProjectContract(dir)
+      expect(contract.allowedChecks['test']?.required).toBe(true)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('required:false is loaded as advisory check', () => {
+    const dir = makeFixtureDir(VALID_POLICY, `
+checks:
+  tests:
+    command: "python3 -m pytest"
+    required: false
+`)
+    try {
+      const contract = loadProjectContract(dir)
+      expect(contract.allowedChecks['tests']?.required).toBe(false)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('invalid required value (string) fails contract validation', () => {
+    const dir = makeFixtureDir(VALID_POLICY, `
+checks:
+  test:
+    command: "node --test"
+    required: "yes"
+`)
+    try {
+      expect(() => loadProjectContract(dir)).toThrow(/required.*boolean/)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('mixed required and advisory checks are both loaded with correct flags', () => {
+    const dir = makeFixtureDir(VALID_POLICY, `
+checks:
+  typecheck:
+    command: "npx tsc --noEmit"
+    required: true
+  tests:
+    command: "python3 -m pytest"
+    required: false
+`)
+    try {
+      const contract = loadProjectContract(dir)
+      expect(contract.allowedChecks['typecheck']?.required).toBe(true)
+      expect(contract.allowedChecks['tests']?.required).toBe(false)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

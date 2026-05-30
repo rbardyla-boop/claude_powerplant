@@ -50,7 +50,9 @@ function parseChecks(verificationMd: string): ReviewRenderState['checks'] {
     const status: 'pass' | 'fail' | 'skip' =
       attempt.isPass ? 'pass' : attempt.verdict === 'SKIP' ? 'skip' : 'fail'
 
-    return { name: attempt.checkId, status, exitCode, snippet }
+    const advisory = /advisory/i.test(section)
+
+    return { name: attempt.checkId, status, exitCode, snippet, advisory }
   })
 }
 

@@ -16,6 +16,7 @@ export interface ReviewRenderState {
     status: 'pass' | 'fail' | 'skip'
     exitCode: number | null
     snippet: string
+    advisory?: boolean
   }>
   risks: Array<{
     severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
