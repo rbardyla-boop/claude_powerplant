@@ -76,12 +76,12 @@ describe('generatePolicyYaml', () => {
 // ── generateVerifyYaml ────────────────────────────────────────────────────────
 
 describe('generateVerifyYaml', () => {
-  const cases: Array<[StackId, string, string[]]> = [
+  const cases: Array<[StackId, string | undefined, string[]]> = [
     ['node-ts',  'node-vitest-typescript-v1', ['test', 'typecheck']],
-    ['python',   'subprocess-python-v1',      ['test']],
-    ['go',       'subprocess-go-v1',          ['test']],
-    ['rust',     'subprocess-generic-v1',     ['test']],
-    ['generic',  'subprocess-generic-v1',     []],
+    ['python',   undefined,                   ['test']],  // no capsule shipped
+    ['go',       undefined,                   ['test']],  // no capsule shipped
+    ['rust',     undefined,                   ['test']],  // no capsule shipped
+    ['generic',  undefined,                   []],        // no capsule shipped
   ]
 
   for (const [stack, expectedProfile, expectedCheckKeys] of cases) {
@@ -92,8 +92,12 @@ describe('generateVerifyYaml', () => {
         doc = yaml.load(generateVerifyYaml(stack)) as Record<string, unknown>
       })
 
-      it(`verificationProfile: ${expectedProfile}`, () => {
-        expect(doc['verificationProfile']).toBe(expectedProfile)
+      it(`verificationProfile: ${expectedProfile ?? 'undefined (no capsule)'}`, () => {
+        if (expectedProfile !== undefined) {
+          expect(doc['verificationProfile']).toBe(expectedProfile)
+        } else {
+          expect(doc['verificationProfile']).toBeUndefined()
+        }
       })
 
       if (expectedCheckKeys.length > 0) {

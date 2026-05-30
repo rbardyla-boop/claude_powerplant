@@ -10,12 +10,14 @@ const DETECTION_ORDER: Array<{ file: string; stack: StackId }> = [
   { file: 'Cargo.toml', stack: 'rust' },
 ]
 
-const PROFILE_MAP: Record<StackId, string> = {
+// Only stacks with a shipped capsule image get a non-null profile.
+// All others fall back to plain subprocess execution.
+const PROFILE_MAP: Record<StackId, string | null> = {
   'node-ts': 'node-vitest-typescript-v1',
-  'python': 'subprocess-python-v1',
-  'go': 'subprocess-go-v1',
-  'rust': 'subprocess-generic-v1',
-  'generic': 'subprocess-generic-v1',
+  'python': null,
+  'go': null,
+  'rust': null,
+  'generic': null,
 }
 
 export function detectStack(projectPath: string): StackId {
@@ -39,6 +41,6 @@ export function detectStack(projectPath: string): StackId {
   return 'generic'
 }
 
-export function stackToProfile(stack: StackId): string {
-  return PROFILE_MAP[stack]
+export function stackToProfile(stack: StackId): string | null {
+  return PROFILE_MAP[stack] ?? null
 }

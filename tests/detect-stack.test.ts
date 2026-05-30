@@ -103,16 +103,16 @@ describe('detectStack', () => {
 })
 
 describe('stackToProfile', () => {
-  const cases: Array<[StackId, string]> = [
+  const cases: Array<[StackId, string | null]> = [
     ['node-ts', 'node-vitest-typescript-v1'],
-    ['python', 'subprocess-python-v1'],
-    ['go', 'subprocess-go-v1'],
-    ['rust', 'subprocess-generic-v1'],
-    ['generic', 'subprocess-generic-v1'],
+    ['python', null],  // no capsule image shipped yet
+    ['go', null],      // no capsule image shipped yet
+    ['rust', null],    // no capsule image shipped yet
+    ['generic', null], // no capsule image shipped yet
   ]
 
   for (const [stack, expected] of cases) {
-    it(`${stack} → ${expected}`, () => {
+    it(`${stack} → ${expected ?? 'null (no capsule)'}`, () => {
       expect(stackToProfile(stack)).toBe(expected)
     })
   }

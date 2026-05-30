@@ -221,12 +221,13 @@ const pyPolicyPath = path.join(pyDir, '.powerplant', 'POLICY.yaml')
 const pyFirstLine = pyInit.stdout.split('\n').find(l => l.trim()) ?? ''
 step('powerplant init --yes (python)', pyInit.status === 0, pyInit.status !== 0 ? (pyInit.stderr.trim() || pyFirstLine) : pyFirstLine)
 
-// ── Step 13: verify subprocess-python-v1 ─────────────────────────────────────
+// ── Step 13: verify python VERIFY.yaml has pytest check, no capsule profile ──
 
 const pyPolicy = fs.existsSync(pyPolicyPath) ? fs.readFileSync(pyPolicyPath, 'utf-8') : ''
 const pyVerifyPath = path.join(pyDir, '.powerplant', 'VERIFY.yaml')
 const pyVerify = fs.existsSync(pyVerifyPath) ? fs.readFileSync(pyVerifyPath, 'utf-8') : ''
-step('VERIFY.yaml contains subprocess-python-v1', pyVerify.includes('subprocess-python-v1'))
+// No capsule image shipped for python yet; verificationProfile is intentionally omitted.
+step('VERIFY.yaml has pytest check, no capsule profile (not yet shipped)', pyVerify.includes('pytest') && !pyVerify.includes('verificationProfile'))
 step('VERIFY.yaml present for Python project', fs.existsSync(pyVerifyPath))
 
 // ── Summary ───────────────────────────────────────────────────────────────────
