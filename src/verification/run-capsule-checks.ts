@@ -49,6 +49,11 @@ export function buildCapsuleDockerArgv(
   command: string,
   args: string[],
 ): string[] {
+  if (profile.capsuleImageName === null) {
+    throw new Error(
+      `Profile '${profile.profileId}' has runtime '${profile.runtime}' with no capsule image — cannot build Docker argv`,
+    )
+  }
   return [
     'run',
     '--rm',

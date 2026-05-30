@@ -73,6 +73,7 @@ describe('VerificationProfile invariants', () => {
 describe('VerificationProfileSchema: rejects unsafe settings', () => {
   const valid = {
     profileId: 'test-profile',
+    runtime: 'capsule' as const,
     capsuleImageName: 'test-image:v1',
     toolchainPackageVersions: { vitest: '1.0.0' },
     networkDuringExecution: false as const,

@@ -65,7 +65,9 @@ export async function cmdDoctor(projectPath: string | null): Promise<void> {
         profileId = contract.verificationProfile
         if (profileId !== null) {
           const profile = resolveVerificationProfile(profileId)
-          capsuleAvailable = isDockerImagePresent(profile.capsuleImageName)
+          capsuleAvailable = profile.capsuleImageName !== null
+            ? isDockerImagePresent(profile.capsuleImageName)
+            : false
         }
       } catch {
         // contract invalid — contractPresent stays true, profile stays null

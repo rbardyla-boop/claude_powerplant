@@ -4,6 +4,7 @@ import path from 'path'
 import os from 'os'
 import { detectStack, stackToProfile } from '../src/projects/detect-stack.js'
 import type { StackId } from '../src/projects/detect-stack.js'
+import { resolveVerificationProfile } from '../src/verification/verification-profiles.js'
 
 function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'pp-detect-stack-'))
@@ -114,6 +115,17 @@ describe('stackToProfile', () => {
   for (const [stack, expected] of cases) {
     it(`${stack} → ${expected}`, () => {
       expect(stackToProfile(stack)).toBe(expected)
+    })
+  }
+})
+
+describe('stackToProfile mappings are backed by real registered profiles', () => {
+  const stacks: StackId[] = ['node-ts', 'python', 'go', 'rust', 'generic']
+
+  for (const stack of stacks) {
+    it(`stackToProfile('${stack}') resolves in the verification profile registry`, () => {
+      const profileId = stackToProfile(stack)
+      expect(() => resolveVerificationProfile(profileId)).not.toThrow()
     })
   }
 })

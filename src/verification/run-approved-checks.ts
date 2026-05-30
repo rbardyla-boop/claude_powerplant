@@ -3,6 +3,7 @@ import type { CheckResult } from '../contracts/verification-preflight-report.js'
 import { classifyCheckResult, tailOutput } from './classify-check-result.js'
 import { resolveVerificationProfile } from './verification-profiles.js'
 import { runCapsuleChecks } from './run-capsule-checks.js'
+import { runSubprocessChecks } from './run-subprocess-checks.js'
 
 const CHECK_TIMEOUT_MS = 120_000
 
@@ -110,7 +111,12 @@ export async function executeChecksWithProfile(
 ): Promise<CheckResult[]> {
   if (verificationProfileId !== null) {
     const profile = resolveVerificationProfile(verificationProfileId)
-    return runCapsuleChecks(workspacePath, checks, profile)
+    if (profile.runtime === 'capsule') return runCapsuleChecks(workspacePath, checks, profile)
+    if (profile.runtime === 'subprocess') return runSubprocessChecks(workspacePath, checks)
+    // Defense-in-depth: Zod validates the registry at write time, but guard here too.
+    throw new Error(
+      `Unknown profile runtime '${(profile as { runtime: string }).runtime}' for profile '${profile.profileId}'`,
+    )
   }
   return runApprovedChecks(workspacePath, checks)
 }
