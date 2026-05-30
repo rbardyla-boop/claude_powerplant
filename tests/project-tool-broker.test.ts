@@ -324,3 +324,142 @@ describe('clearance invariants in session summary', () => {
     expect(computePilotClearance(true, true, 0, false)).toBe(false) // non-pilot
   })
 })
+
+// ── All-required-checks gate ──────────────────────────────────────────────────
+//
+// Regression tests for the fix that requires ALL required:true checks to be
+// executed and pass before project_finalize is accepted. A single passing
+// required check is no longer sufficient when multiple are declared.
+
+describe('all required checks gate — complete verification semantics', () => {
+  // Minimal simulation of the new broker state machine for the finalize gate.
+  function makeState(requiredIds: string[], advisoryIds: string[] = []) {
+    const requiredCheckIds = new Set(requiredIds)
+    const passedRequiredChecks = new Set<string>()
+    let checksValidAfterLastWrite = false
+
+    function runCheck(id: string, passed: boolean) {
+      const isRequired = requiredCheckIds.has(id)
+      if (isRequired) {
+        if (passed) {
+          passedRequiredChecks.add(id)
+        } else {
+          passedRequiredChecks.delete(id)
+        }
+      }
+      if (passed || !isRequired) {
+        checksValidAfterLastWrite = true
+      }
+    }
+
+    function doWrite() {
+      checksValidAfterLastWrite = false
+      passedRequiredChecks.clear()
+    }
+
+    function tryFinalize(): string {
+      if (requiredCheckIds.size > 0) {
+        const missing = [...requiredCheckIds].filter(id => !passedRequiredChecks.has(id))
+        if (missing.length > 0) {
+          throw new Error(
+            `project_finalize rejected: not all required checks have passed. ` +
+            `Missing or failed: ${missing.join(', ')}.`,
+          )
+        }
+      }
+      if (!checksValidAfterLastWrite) {
+        throw new Error('project_finalize rejected: checks must run after the most recent write.')
+      }
+      return 'finalized'
+    }
+
+    return { runCheck, doWrite, tryFinalize, passedRequiredChecks, checksValidAfterLastWrite: () => checksValidAfterLastWrite }
+  }
+
+  it('case 1 — one required check declared and passed → finalize allowed', () => {
+    const s = makeState(['test'])
+    s.doWrite()
+    s.runCheck('test', true)
+    expect(() => s.tryFinalize()).not.toThrow()
+  })
+
+  it('case 2 — four required checks declared, only one passed → finalize blocked with missing names', () => {
+    const s = makeState(['check-a', 'check-b', 'check-c', 'check-d'])
+    s.doWrite()
+    s.runCheck('check-a', true) // only one of four
+    expect(() => s.tryFinalize()).toThrow(/Missing or failed: check-b, check-c, check-d|Missing or failed:.*check-b/)
+  })
+
+  it('case 3 — four required checks declared, all passed → finalize allowed', () => {
+    const s = makeState(['check-a', 'check-b', 'check-c', 'check-d'])
+    s.doWrite()
+    s.runCheck('check-a', true)
+    s.runCheck('check-b', true)
+    s.runCheck('check-c', true)
+    s.runCheck('check-d', true)
+    expect(() => s.tryFinalize()).not.toThrow()
+  })
+
+  it('case 4 — required check failed, advisory passed → finalize blocked', () => {
+    const s = makeState(['required-check'], ['advisory-check'])
+    s.doWrite()
+    s.runCheck('required-check', false)  // required fails
+    s.runCheck('advisory-check', true)   // advisory passes
+    expect(() => s.tryFinalize()).toThrow(/Missing or failed: required-check/)
+  })
+
+  it('case 5 — required passed, advisory failed → finalize allowed; advisory recorded', () => {
+    const s = makeState(['required-check'], ['advisory-check'])
+    s.doWrite()
+    s.runCheck('required-check', true)  // required passes
+    s.runCheck('advisory-check', false) // advisory fails (does not block)
+    expect(() => s.tryFinalize()).not.toThrow()
+  })
+
+  it('case 6 — no required checks, advisory only → finalize allowed', () => {
+    const s = makeState([], ['lint']) // no required checks
+    s.doWrite()
+    s.runCheck('lint', false) // advisory fails — still opens checksValidAfterLastWrite
+    expect(() => s.tryFinalize()).not.toThrow()
+  })
+
+  it('write after passing required checks resets gate — all must re-run', () => {
+    const s = makeState(['check-a', 'check-b'])
+    s.doWrite()
+    s.runCheck('check-a', true)
+    s.runCheck('check-b', true)
+    expect(() => s.tryFinalize()).not.toThrow()
+
+    // Second write resets: must run all required checks again
+    s.doWrite()
+    s.runCheck('check-a', true)  // only one re-run after second write
+    expect(() => s.tryFinalize()).toThrow(/Missing or failed: check-b/)
+  })
+})
+
+describe('all required checks gate — source invariants', () => {
+  let src: string
+
+  beforeAll(() => {
+    src = fs.readFileSync(path.resolve('src/broker/project-tool-broker.ts'), 'utf-8')
+  })
+
+  it('broker tracks passedRequiredChecks as a Set', () => {
+    expect(src).toContain('passedRequiredChecks')
+    expect(src).toContain('passedRequiredChecks.add(check)')
+    expect(src).toContain('passedRequiredChecks.delete(check)')
+  })
+
+  it('broker clears passedRequiredChecks on write', () => {
+    expect(src).toContain('passedRequiredChecks.clear()')
+  })
+
+  it('finalize rejects with named missing checks, not generic testCheckPassed error', () => {
+    expect(src).toContain('Missing or failed:')
+    expect(src).toContain('missingChecks.join')
+  })
+
+  it('testCheckPassed is derived from passedRequiredChecks size comparison', () => {
+    expect(src).toContain('passedRequiredChecks.size === state.requiredCheckIds.size')
+  })
+})

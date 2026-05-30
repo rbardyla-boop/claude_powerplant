@@ -62,6 +62,11 @@ interface BrokerState {
   taskDescription: string
   agentMessage: string
   modelId: string
+  // All check IDs declared required:true in VERIFY.yaml. Every one must pass before finalize.
+  requiredCheckIds: ReadonlySet<string>
+  // Tracks which required checks have most recently passed (cleared on write, updated on run).
+  passedRequiredChecks: Set<string>
+  // Derived: true when requiredCheckIds is empty OR every ID is in passedRequiredChecks.
   testCheckPassed: boolean
   finalizeReceived: boolean
   checkResults: CheckResult[]
@@ -71,8 +76,8 @@ interface BrokerState {
   builtinToolUseCount: number
   finalResponse: string
   totalCustomToolCalls: number
-  // Tracks whether all required checks have been run after the most recent write.
-  // Starts false; set to true on PASS check; reset to false on any write.
+  // Tracks whether checks have been run after the most recent write.
+  // Starts false; set to true on any check run; reset to false on any write.
   checksValidAfterLastWrite: boolean
   lastWriteAt: number | null
   lastCheckPassedAt: number | null
@@ -154,8 +159,10 @@ function handleWriteFile(state: BrokerState, input: unknown): string {
   fs.mkdirSync(path.dirname(absPath), { recursive: true })
   fs.writeFileSync(absPath, content, 'utf-8')
 
-  // Any write invalidates the check gate — the agent must re-run checks.
+  // Any write invalidates the check gate — the agent must re-run all required checks.
   state.checksValidAfterLastWrite = false
+  state.passedRequiredChecks.clear()
+  state.testCheckPassed = state.requiredCheckIds.size === 0
   state.lastWriteAt = Date.now()
   state.writeCount++
 
@@ -196,8 +203,13 @@ async function handleRunCheck(state: BrokerState, input: unknown): Promise<strin
   const passed = checkResult.verdict === 'PASS'
 
   if (isRequired) {
-    // Required checks gate finalization — pass or fail is authoritative.
-    state.testCheckPassed = passed
+    // Track each required check individually — all must pass before finalize.
+    if (passed) {
+      state.passedRequiredChecks.add(check)
+    } else {
+      state.passedRequiredChecks.delete(check)
+    }
+    state.testCheckPassed = state.passedRequiredChecks.size === state.requiredCheckIds.size
   }
   // Advisory checks never change testCheckPassed regardless of outcome.
 
@@ -244,11 +256,17 @@ async function handleFinalize(state: BrokerState, input: unknown): Promise<strin
 
   state.finalizeAttempted = true
 
-  if (!state.testCheckPassed) {
-    throw new Error(
-      'project_finalize rejected: test check has not passed. ' +
-      'Call project_run_check with a declared check ID and ensure it passes first.',
+  if (state.requiredCheckIds.size > 0) {
+    const missingChecks = [...state.requiredCheckIds].filter(
+      id => !state.passedRequiredChecks.has(id),
     )
+    if (missingChecks.length > 0) {
+      throw new Error(
+        `project_finalize rejected: not all required checks have passed. ` +
+        `Missing or failed: ${missingChecks.join(', ')}. ` +
+        `Run all required checks and ensure they pass before finalizing.`,
+      )
+    }
   }
 
   if (!state.checksValidAfterLastWrite) {
@@ -319,7 +337,11 @@ export async function runProjectPilotBrokerSession(opts: {
     agentMessage = taskDescription,
   } = opts
 
-  const hasRequiredChecks = Object.values(contract.allowedChecks).some(c => c.required)
+  const requiredCheckIds: ReadonlySet<string> = new Set(
+    Object.entries(contract.allowedChecks)
+      .filter(([, c]) => c.required)
+      .map(([id]) => id),
+  )
 
   const state: BrokerState = {
     snapshot,
@@ -329,8 +351,10 @@ export async function runProjectPilotBrokerSession(opts: {
     taskDescription,
     agentMessage,
     modelId: SPRINT4A_PILOT_MODEL,
+    requiredCheckIds,
+    passedRequiredChecks: new Set(),
     // If no required checks are declared, the finalization gate starts open.
-    testCheckPassed: !hasRequiredChecks,
+    testCheckPassed: requiredCheckIds.size === 0,
     finalizeReceived: false,
     checkResults: [],
     lastCheckResult: null,
