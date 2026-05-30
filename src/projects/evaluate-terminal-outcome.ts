@@ -63,7 +63,16 @@ export function evaluateTerminalRunOutcome(opts: {
 
   const finalCheckResult = checkResults.length > 0 ? checkResults[checkResults.length - 1]! : null
 
-  // Final verification — ALL six gates must be true.
+  // Completion signal: primary truth is structured finalize evidence (project_finalize was
+  // accepted and artifacts exist). The magic string is a fallback for run formats that lack
+  // structured finalize tracking. When finalizeReceived && patchPackagePresent are both true
+  // (already required by the gates below), this OR always resolves to true — preventing a
+  // false FAIL when the agent omits the marker text after a legitimate finalize call.
+  const completionSignalOk =
+    (finalizeReceived && patchPackagePresent) ||
+    finalResponse.trim().includes(SPRINT4A_FINAL_RESPONSE)
+
+  // Final verification — ALL gates must be true.
   // Intermediate check failures remain in history without poisoning this result.
   // Each gate is listed explicitly so the invariant is machine-checkable.
   const finalVerificationPassed =
@@ -75,7 +84,7 @@ export function evaluateTerminalRunOutcome(opts: {
     finalCheckResult?.verdict !== 'FAIL_VERIFICATION_INTEGRITY' && // no zero-test false positive
     sourceUnmodified &&                            // source project not modified
     builtInToolUseCount === 0 &&                  // no built-in tool misuse
-    finalResponse.trim().includes(SPRINT4A_FINAL_RESPONSE)         // correct completion signal
+    completionSignalOk                             // finalize evidence (primary) or magic string (fallback)
 
   // patchEligibleForApplication is derived exclusively from finalVerificationPassed.
   // It is never true unless every gate above is satisfied.
@@ -96,9 +105,9 @@ export function evaluateTerminalRunOutcome(opts: {
       failureReason = 'built-in tools were used'
     } else if (!patchPackagePresent) {
       failureReason = 'patch package was not generated'
-    } else {
-      failureReason = 'final response did not include required completion marker'
     }
+    // completionSignalOk is always true when finalizeReceived && patchPackagePresent are true
+    // (both already gated above), so no else branch is reachable here.
   }
 
   return {

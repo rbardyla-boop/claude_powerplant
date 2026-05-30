@@ -175,6 +175,7 @@ export function buildSessionRunSnapshot(
       projectId: contract.projectId,
       sourcePath: sessionBaselinePath,
       capturedAt: now,
+      excludePaths: contract.excludePaths,
       files,
     },
     sanitizedManifest: {
