@@ -203,3 +203,33 @@ describe('cmdInit', () => {
     }
   })
 })
+
+// ── Subprocess portability: generated VERIFY.yaml check commands ──────────────
+//
+// Enforces docs/VERIFY_PROFILE_CONSTRAINTS.md:
+// Non-capsule stacks run checks in an isolated subprocess without user ~/.local packages.
+// Generated commands must use stdlib-portable invocations (no bare pytest/ruff/mypy).
+// See: docs/VERIFY_PROFILE_CONSTRAINTS.md
+
+describe('subprocess portability: generated VERIFY.yaml check commands', () => {
+  // Bare tool names that fail when user ~/.local/bin is not in PATH.
+  // Commands like `python3 -m pytest` are OK; bare `pytest` is not.
+  const SUBPROCESS_UNSAFE_BARE_COMMANDS = ['pytest', 'ruff', 'mypy', 'black', 'flake8', 'pylint', 'poetry']
+
+  const stacks: StackId[] = ['node-ts', 'python', 'go', 'rust', 'generic']
+
+  for (const stack of stacks) {
+    it(`${stack}: no check command uses a bare user-installed tool`, () => {
+      const doc = yaml.load(generateVerifyYaml(stack)) as Record<string, unknown>
+      const checks = (doc['checks'] ?? {}) as Record<string, { command: string }>
+      for (const [checkId, check] of Object.entries(checks)) {
+        const cmd = check.command
+        const firstToken = cmd.trim().split(/\s+/)[0]
+        expect(
+          SUBPROCESS_UNSAFE_BARE_COMMANDS,
+          `check '${checkId}' for stack '${stack}' uses bare tool '${firstToken}' — use 'python3 -m ${firstToken}' form instead (see docs/VERIFY_PROFILE_CONSTRAINTS.md)`
+        ).not.toContain(firstToken)
+      }
+    })
+  }
+})

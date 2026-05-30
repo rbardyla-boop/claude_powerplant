@@ -104,10 +104,10 @@ describe('generateVerifyYaml', () => {
     expect(doc['verificationProfile']).toBeUndefined()
   })
 
-  it('python generates pytest check', () => {
+  it('python generates python3 -m pytest check (subprocess-portable form)', () => {
     const doc = yaml.load(generateVerifyYaml('python')) as Record<string, unknown>
     const checks = doc['checks'] as Record<string, { command: string }>
-    expect(checks['test']?.command).toBe('pytest')
+    expect(checks['test']?.command).toBe('python3 -m pytest')
   })
 
   it('go omits verificationProfile (no capsule shipped)', () => {
@@ -368,7 +368,7 @@ describe('cmdInit: stack detection', () => {
       const v = yaml.load(fs.readFileSync(path.join(dir, '.powerplant', 'VERIFY.yaml'), 'utf-8')) as Record<string, unknown>
       expect(v['verificationProfile']).toBeUndefined()
       const checks = v['checks'] as Record<string, { command: string }>
-      expect(checks['test']?.command).toBe('pytest')
+      expect(checks['test']?.command).toBe('python3 -m pytest')
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

@@ -14,7 +14,9 @@ const STACK_CHECKS: Record<StackId, Record<string, CheckDef>> = {
     typecheck: { command: 'npx tsc --noEmit' },
   },
   python: {
-    test: { command: 'pytest' },
+    // python3 -m pytest: works without pytest in PATH; requires only system Python + installed pytest package.
+    // See docs/VERIFY_PROFILE_CONSTRAINTS.md — bare `pytest` fails in subprocess isolation.
+    test: { command: 'python3 -m pytest' },
   },
   go: {
     test: { command: 'go test ./...' },
