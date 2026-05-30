@@ -109,6 +109,15 @@ function computeNextAction(
   }
 }
 
+const INCOMPLETE_NEXT_ACTION: Record<string, string> = {
+  FAILED_INCOMPLETE_AGENT_RUN:
+    'Agent produced no patch — re-run with an explicit write target ' +
+    '(e.g. instruct the agent to write findings to tests/REPORT.md before finalizing)',
+  FAILED_TOOL_BUDGET_EXHAUSTED:
+    'Tool budget exhausted before finalization — narrow the task scope ' +
+    'or break into smaller runs, then re-run',
+}
+
 // ── Public builder (exported for tests) ──────────────────────────────────────
 
 export function buildReviewRenderState(runId: string, artifactDir: string): ReviewRenderState {
@@ -138,7 +147,7 @@ export function buildReviewRenderState(runId: string, artifactDir: string): Revi
   const checks = parseChecks(verificationMd)
   const risks = parseRisks(adversarialMd)
   const overallStatus = computeOverallStatus(checks, risks, classification, verificationMd)
-  const nextAction = computeNextAction(overallStatus, runId)
+  let nextAction = computeNextAction(overallStatus, runId)
 
   let terminationNote: string | null = null
   if (classification && !classification.artifactsComplete) {
@@ -148,6 +157,8 @@ export function buildReviewRenderState(runId: string, artifactDir: string): Revi
     }
     const label = labels[classification.terminationReason] ?? classification.terminationReason
     terminationNote = `Run terminated (${label}) — no PATCH.diff produced`
+    nextAction = INCOMPLETE_NEXT_ACTION[classification.terminationReason]
+      ?? `Re-run the task (${classification.terminationReason})`
   }
 
   return { runId, projectId, task, overallStatus, terminationNote, diff, checks, risks, nextAction }
