@@ -437,6 +437,9 @@ function printReviewTuiCompact(state: ReviewRenderState): void {
   console.log(`Status:  ${state.overallStatus}`)
   console.log(`Project: ${state.projectId}`)
   console.log(`Task:    ${state.task}`)
+  if (state.terminationNote) {
+    console.log(`Warning: ${state.terminationNote}`)
+  }
   console.log(`Diff:    ${state.diff.files} files +${state.diff.linesAdded}/-${state.diff.linesRemoved}`)
   const pass = state.checks.filter(c => c.status === 'pass').length
   const fail = state.checks.filter(c => c.status === 'fail').length
@@ -498,6 +501,12 @@ export function printReviewTui(state: ReviewRenderState): void {
   const projectInfo = `Project: ${state.projectId.slice(0, 20)}   Task: "${state.task.slice(0, 28)}"`
   const projPad = Math.max(1, innerW - projectInfo.length - badgePlain.length)
   lines.push(`│ ${projectInfo}${' '.repeat(projPad)}${badge} │`)
+
+  // Termination note (budget exhaustion, incomplete run)
+  if (state.terminationNote) {
+    lines.push(section('Warning'))
+    lines.push(row(state.terminationNote.slice(0, innerW)))
+  }
 
   // Diff
   lines.push(section('Diff'))

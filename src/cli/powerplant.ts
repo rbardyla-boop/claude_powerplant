@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { fileURLToPath } from 'url'
 import path from 'path'
+import fs from 'fs'
 import { cmdInit } from './commands/init.js'
 import { cmdInspect } from './commands/inspect.js'
 import { cmdRun } from './commands/run.js'
@@ -25,6 +26,7 @@ loadPowerplantEnv(pkgRoot)
 
 function printUsage(): void {
   console.log('Usage:')
+  console.log('  powerplant --version')
   console.log('  powerplant init    [project-path] [--stack <stack>] [--yes] [--force]')
   console.log('  powerplant setup   [--repair]')
   console.log('  powerplant inspect <project-path>')
@@ -52,6 +54,13 @@ function printUsage(): void {
 const [, , command, ...rest] = process.argv
 
 switch (command) {
+  case '--version':
+  case '-V': {
+    const pkg = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf-8')) as { version: string }
+    console.log(`powerplant ${pkg.version}`)
+    break
+  }
+
   case 'init': {
     await cmdInit(rest)
     break

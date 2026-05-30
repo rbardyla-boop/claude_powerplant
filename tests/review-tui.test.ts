@@ -122,6 +122,7 @@ describe('printReviewTui — PASS state', () => {
     projectId: 'my-project',
     task: 'Fix the auth token refresh bug',
     overallStatus: 'PASS',
+    terminationNote: null,
     diff: { files: 2, linesAdded: 8, linesRemoved: 3, raw: PATCH_DIFF },
     checks: [
       { name: 'test', status: 'pass', exitCode: 0, snippet: 'Tests  42 passed' },
@@ -209,6 +210,7 @@ describe('printReviewTui — FAIL state', () => {
     projectId: 'broken-app',
     task: 'Add retry logic',
     overallStatus: 'FAIL',
+    terminationNote: null,
     diff: { files: 1, linesAdded: 5, linesRemoved: 0, raw: '' },
     checks: [
       { name: 'test', status: 'fail', exitCode: 1, snippet: 'Tests  3 failed' },
@@ -267,6 +269,7 @@ describe('printReviewTui — RISK state', () => {
     projectId: 'payment-svc',
     task: 'Refactor auth',
     overallStatus: 'RISK',
+    terminationNote: null,
     diff: { files: 3, linesAdded: 20, linesRemoved: 10, raw: '' },
     checks: [
       { name: 'test', status: 'pass', exitCode: 0, snippet: '' },
@@ -331,6 +334,7 @@ describe('printReviewTui — NO_COLOR', () => {
       projectId: 'proj',
       task: 'task',
       overallStatus: 'PASS',
+      terminationNote: null,
       diff: { files: 0, linesAdded: 0, linesRemoved: 0, raw: '' },
       checks: [{ name: 'test', status: 'pass', exitCode: 0, snippet: '' }],
       risks: [],
@@ -375,6 +379,7 @@ describe('printReviewTui — narrow terminal fallback', () => {
       projectId: 'proj',
       task: 'task',
       overallStatus: 'PASS',
+      terminationNote: null,
       diff: { files: 1, linesAdded: 2, linesRemoved: 1, raw: '' },
       checks: [],
       risks: [],
@@ -818,5 +823,127 @@ describe('printReviewReport — existing behavior preserved', () => {
     expect(all).toContain('foo.ts')
 
     vi.restoreAllMocks()
+  })
+})
+
+// ── terminationNote: budget-exhausted run ────────────────────────────────────
+
+describe('buildReviewRenderState — terminationNote from classification', () => {
+  let tmpBase: string
+  let artifactDir: string
+
+  beforeEach(() => {
+    tmpBase = makeTempDir()
+    artifactDir = makeRunDir(tmpBase, 'my-project', 'pp-run-budget001')
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpBase, { recursive: true, force: true })
+  })
+
+  it('terminationNote is null when artifactsComplete is true', () => {
+    writeArtifacts(artifactDir, {
+      classification: {
+        terminationReason: 'COMPLETED',
+        patchEligibleForApplication: true,
+        readCount: 5, writeCount: 2, checkCount: 1,
+        finalizeAttempted: true, artifactsComplete: true, repeatedCheckFailures: false,
+      },
+    })
+    const state = buildReviewRenderState('pp-run-budget001', artifactDir)
+    expect(state.terminationNote).toBeNull()
+  })
+
+  it('terminationNote is null when no classification file exists', () => {
+    const state = buildReviewRenderState('pp-run-budget001', artifactDir)
+    expect(state.terminationNote).toBeNull()
+  })
+
+  it('terminationNote is populated when FAILED_TOOL_BUDGET_EXHAUSTED and artifactsComplete=false', () => {
+    writeArtifacts(artifactDir, {
+      classification: {
+        terminationReason: 'FAILED_TOOL_BUDGET_EXHAUSTED',
+        patchEligibleForApplication: false,
+        readCount: 30, writeCount: 0, checkCount: 0,
+        finalizeAttempted: false, artifactsComplete: false, repeatedCheckFailures: false,
+      },
+    })
+    const state = buildReviewRenderState('pp-run-budget001', artifactDir)
+    expect(state.terminationNote).not.toBeNull()
+    expect(state.terminationNote).toMatch(/tool budget exhausted/i)
+    expect(state.terminationNote).toMatch(/no PATCH\.diff/i)
+  })
+
+  it('terminationNote is populated when FAILED_INCOMPLETE_AGENT_RUN and artifactsComplete=false', () => {
+    writeArtifacts(artifactDir, {
+      classification: {
+        terminationReason: 'FAILED_INCOMPLETE_AGENT_RUN',
+        patchEligibleForApplication: false,
+        readCount: 5, writeCount: 0, checkCount: 0,
+        finalizeAttempted: false, artifactsComplete: false, repeatedCheckFailures: false,
+      },
+    })
+    const state = buildReviewRenderState('pp-run-budget001', artifactDir)
+    expect(state.terminationNote).not.toBeNull()
+    expect(state.terminationNote).toMatch(/agent run did not complete/i)
+  })
+})
+
+describe('printReviewTui — terminationNote rendered in output', () => {
+  let logs: string[]
+  let restoreColumns: PropertyDescriptor | undefined
+
+  beforeEach(() => {
+    logs = []
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '))
+    })
+    restoreColumns = Object.getOwnPropertyDescriptor(process.stdout, 'columns')
+    Object.defineProperty(process.stdout, 'columns', { value: 80, configurable: true })
+    delete process.env['NO_COLOR']
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    if (restoreColumns) {
+      Object.defineProperty(process.stdout, 'columns', restoreColumns)
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (process.stdout as any).columns
+    }
+  })
+
+  it('renders termination note section when note is present', () => {
+    const state: ReviewRenderState = {
+      runId: 'pp-run-budget001',
+      projectId: 'my-project',
+      task: 'Fix the bug',
+      overallStatus: 'FAIL',
+      terminationNote: 'Run terminated (tool budget exhausted) — no PATCH.diff produced',
+      diff: { files: 0, linesAdded: 0, linesRemoved: 0, raw: '' },
+      checks: [],
+      risks: [],
+      nextAction: 'Fix failing checks and re-run the task',
+    }
+    printReviewTui(state)
+    const all = logs.join('\n')
+    expect(all).toContain('tool budget exhausted')
+  })
+
+  it('does not render Warning section when terminationNote is null', () => {
+    const state: ReviewRenderState = {
+      runId: 'pp-run-clean001',
+      projectId: 'my-project',
+      task: 'Fix the bug',
+      overallStatus: 'PASS',
+      terminationNote: null,
+      diff: { files: 1, linesAdded: 3, linesRemoved: 1, raw: '' },
+      checks: [{ name: 'test', status: 'pass', exitCode: 0, snippet: '' }],
+      risks: [],
+      nextAction: 'powerplant approve pp-run-clean001',
+    }
+    printReviewTui(state)
+    const all = logs.join('\n')
+    expect(all).not.toContain('Warning')
   })
 })

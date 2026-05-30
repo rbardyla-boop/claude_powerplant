@@ -28,6 +28,19 @@ const STACK_CHECKS: Record<StackId, Record<string, CheckDef>> = {
   generic: {},
 }
 
+// Prepended to every generated VERIFY.yaml to document subprocess execution constraints.
+const VERIFY_HEADER = `# VERIFY.yaml — check execution constraints:
+#
+#   Commands run as plain subprocesses (no shell). The command string is split on
+#   whitespace — e.g. "npm test" → ["npm", "test"]. Shell features are NOT
+#   supported: no &&, ||, pipes, redirection, quoting, or expansion.
+#
+#   Only PATH is forwarded to the subprocess. Tools must be installed system-wide
+#   (e.g. npm, python3, go, cargo). Shell builtins like "source" will not work.
+#   Use "python3 -m pytest" instead of bare "pytest" for portability.
+#
+`
+
 /**
  * Produce a VERIFY.yaml string for the given stack.
  * Only emits verificationProfile when a capsule image actually exists for it.
@@ -44,9 +57,8 @@ export function generateVerifyYaml(stack: StackId): string {
     doc['verificationProfile'] = profileId
   }
   // No verificationProfile → checks run as plain subprocesses (no Docker capsule).
-  // A capsule image for this stack is not yet shipped. Remove this comment once added.
 
   doc['checks'] = checks
 
-  return yaml.dump(doc, { lineWidth: 120 })
+  return VERIFY_HEADER + yaml.dump(doc, { lineWidth: 120 })
 }

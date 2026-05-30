@@ -397,12 +397,15 @@ describe('cmdInit: guard against existing .powerplant/', () => {
     }
   })
 
-  it('without --force: fails when .powerplant/ directory exists (even if empty)', async () => {
+  it('without --force: succeeds when .powerplant/ directory exists but contains no generated files', async () => {
     const dir = makeTempDir()
     mockCli()
     try {
+      // Empty .powerplant/ (state-only dir, no POLICY.yaml or VERIFY.yaml) is reinitializable.
       fs.mkdirSync(path.join(dir, '.powerplant'), { recursive: true })
-      await expect(cmdInit(['--stack', 'node-ts', dir])).rejects.toThrow('process.exit(1)')
+      await cmdInit(['--stack', 'node-ts', dir])
+      expect(fs.existsSync(path.join(dir, '.powerplant', 'POLICY.yaml'))).toBe(true)
+      expect(fs.existsSync(path.join(dir, '.powerplant', 'VERIFY.yaml'))).toBe(true)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -486,6 +489,85 @@ describe('cmdInit: --yes flag', () => {
       await cmdInit(['--yes', '--stack', 'node-ts', dir])
       expect(fs.existsSync(path.join(dir, '.powerplant', 'POLICY.yaml'))).toBe(true)
       expect(fs.existsSync(path.join(dir, '.powerplant', 'VERIFY.yaml'))).toBe(true)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── generatePolicyYaml: README.md in allowedReadPaths ────────────────────────
+
+describe('generatePolicyYaml: README.md in default allowedReadPaths', () => {
+  it('node-ts allowedReadPaths includes README.md', () => {
+    const doc = yaml.load(generatePolicyYaml('node-ts', 'test-id')) as Record<string, unknown>
+    expect(doc['allowedReadPaths'] as string[]).toContain('README.md')
+  })
+
+  it('python allowedReadPaths includes README.md', () => {
+    const doc = yaml.load(generatePolicyYaml('python', 'test-id')) as Record<string, unknown>
+    expect(doc['allowedReadPaths'] as string[]).toContain('README.md')
+  })
+
+  it('go allowedReadPaths includes README.md', () => {
+    const doc = yaml.load(generatePolicyYaml('go', 'test-id')) as Record<string, unknown>
+    expect(doc['allowedReadPaths'] as string[]).toContain('README.md')
+  })
+
+  it('rust allowedReadPaths includes README.md', () => {
+    const doc = yaml.load(generatePolicyYaml('rust', 'test-id')) as Record<string, unknown>
+    expect(doc['allowedReadPaths'] as string[]).toContain('README.md')
+  })
+
+  it('generic allowedReadPaths includes README.md', () => {
+    const doc = yaml.load(generatePolicyYaml('generic', 'test-id')) as Record<string, unknown>
+    expect(doc['allowedReadPaths'] as string[]).toContain('README.md')
+  })
+})
+
+// ── generateVerifyYaml: constraint comment in generated YAML ─────────────────
+
+describe('generateVerifyYaml: subprocess constraint comment', () => {
+  it('generated VERIFY.yaml starts with a # comment block', () => {
+    for (const stack of ['node-ts', 'python', 'go', 'rust', 'generic'] as const) {
+      const out = generateVerifyYaml(stack)
+      expect(out.trimStart()).toMatch(/^#/)
+    }
+  })
+
+  it('constraint comment mentions no shell / subprocess execution', () => {
+    const out = generateVerifyYaml('python')
+    expect(out).toMatch(/subprocess|no shell/i)
+  })
+
+  it('constraint comment mentions whitespace split', () => {
+    const out = generateVerifyYaml('python')
+    expect(out).toMatch(/whitespace|split/i)
+  })
+
+  it('YAML content after comment is still valid YAML', () => {
+    for (const stack of ['node-ts', 'python', 'go', 'rust'] as const) {
+      const out = generateVerifyYaml(stack)
+      expect(() => yaml.load(out)).not.toThrow()
+    }
+  })
+})
+
+// ── loadProjectContract: verificationProfile: null treated as absent ──────────
+
+describe('loadProjectContract: verificationProfile null handling', () => {
+  it('verificationProfile: null is accepted and treated as no profile', () => {
+    const dir = makeTempDir()
+    try {
+      const projectId = generateProjectId(dir)
+      fs.mkdirSync(path.join(dir, '.powerplant'), { recursive: true })
+      fs.writeFileSync(path.join(dir, '.powerplant', 'POLICY.yaml'), generatePolicyYaml('python', projectId))
+      // Write VERIFY.yaml with explicit null verificationProfile
+      fs.writeFileSync(
+        path.join(dir, '.powerplant', 'VERIFY.yaml'),
+        'verificationProfile: null\nchecks:\n  test:\n    command: python3 -m pytest\n',
+      )
+      const contract = loadProjectContract(dir)
+      expect(contract.verificationProfile).toBeNull()
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
