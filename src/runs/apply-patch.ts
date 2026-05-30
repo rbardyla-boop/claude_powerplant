@@ -7,6 +7,8 @@ export interface SourceManifest {
   projectId: string
   sourcePath: string
   capturedAt: string
+  /** excludePaths used during capture — present in manifests generated after the fix */
+  excludePaths?: string[]
   files: Array<{ relativePath: string; sha256: string }>
 }
 

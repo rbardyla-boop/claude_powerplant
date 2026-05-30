@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
-import { buildSanitizedWorkspace } from './build-sanitized-workspace.js'
+import { buildSanitizedWorkspace, matchesGlob } from './build-sanitized-workspace.js'
 import { validateSanitizedWorkspace } from './validate-sanitized-workspace.js'
 import type { ProjectContract } from './project-contract.js'
 
@@ -15,6 +15,8 @@ export interface PilotSnapshot {
     projectId: string
     sourcePath: string
     capturedAt: string
+    /** Paths excluded from the manifest — same patterns as POLICY.yaml excludePaths */
+    excludePaths: string[]
     files: Array<{ relativePath: string; sha256: string }>
   }
   /** SANITIZED_MANIFEST: files that entered the baseline snapshot */
@@ -55,11 +57,18 @@ function captureSourceManifest(
 ): PilotSnapshot['sourceManifest'] {
   const sourcePath = path.resolve(contract.sourcePath)
   const allFiles = walkFiles(sourcePath, sourcePath)
+  // Exclude the same paths as the sanitized snapshot so that changes to
+  // .git internals, build artifacts, and other excluded directories do not
+  // cause spurious drift failures at approve time.
+  const relevant = allFiles.filter(
+    f => !contract.excludePaths.some(pattern => matchesGlob(f.rel, pattern)),
+  )
   return {
     projectId: contract.projectId,
     sourcePath: contract.sourcePath,
     capturedAt: new Date().toISOString(),
-    files: allFiles.map(f => ({
+    excludePaths: contract.excludePaths,
+    files: relevant.map(f => ({
       relativePath: f.rel,
       sha256: sha256ofFile(f.abs),
     })),

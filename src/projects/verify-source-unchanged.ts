@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
+import { matchesGlob } from './build-sanitized-workspace.js'
 import type { PilotSnapshot } from './build-pilot-snapshot.js'
 
 export interface SourceVerificationResult {
@@ -40,9 +41,13 @@ export function verifySourceUnchanged(
     }
   }
 
-  // Check for new files not in the original manifest
+  // Check for new files not in the original manifest, using the same excludePaths
+  // so that .git internals and build artifacts are not flagged as "new".
+  const excludePaths = snapshot.sourceManifest.excludePaths ?? []
   const originalPaths = new Set(snapshot.sourceManifest.files.map(f => f.relativePath))
-  const newFiles = walkAllRelative(sourcePath).filter(p => !originalPaths.has(p))
+  const newFiles = walkAllRelative(sourcePath)
+    .filter(p => !excludePaths.some(pattern => matchesGlob(p, pattern)))
+    .filter(p => !originalPaths.has(p))
 
   const sourceUnmodified =
     changedFiles.length === 0 &&
