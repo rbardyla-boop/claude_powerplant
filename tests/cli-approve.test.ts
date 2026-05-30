@@ -383,9 +383,8 @@ describe('approve flow — successful approve creates branch and commit', () => 
     // Create branch
     spawnSync('git', ['checkout', '-b', branchName], { cwd: sourceDir })
 
-    // Apply patch
-    spawnSync('git', ['apply', patchPath], { cwd: sourceDir })
-    spawnSync('git', ['add', '-A'], { cwd: sourceDir })
+    // Apply patch (--index stages exactly the patched files, nothing more)
+    spawnSync('git', ['apply', '--index', patchPath], { cwd: sourceDir })
 
     // Write commit message
     const msg = `feat: Add a helper function\n\nPowerplant-Run: ${runId}\nEvidence-Hash: ${evidenceHash}\nVerification: PASS\n`
@@ -510,6 +509,52 @@ describe('approve flow — --pr with missing gh', () => {
     // The spawn will error (not found) — our code handles r.error by printing a warning
     expect(r.error).toBeDefined()
     // A missing gh binary must not cause an uncaught exception
+  })
+})
+
+describe('approve flow — git apply --index isolates patch from working-tree changes', () => {
+  let sourceDir: string
+
+  beforeEach(() => {
+    sourceDir = makeTempDir()
+    initGitRepo(sourceDir, 'hello.ts', 'export const x = 1\n')
+  })
+
+  afterEach(() => {
+    spawnSync('git', ['checkout', 'master'], { cwd: sourceDir })
+    fs.rmSync(sourceDir, { recursive: true, force: true })
+  })
+
+  it('pre-existing unstaged file is not included in the approve commit', () => {
+    const runId = `pp-run-test-${Date.now()}`
+    const patch = buildPatchDiff('hello.ts', 'export const x = 1\n', 'export const x = 2\n')
+    const patchFile = path.join(os.tmpdir(), `pp-iso-${Date.now()}.diff`)
+    fs.writeFileSync(patchFile, patch)
+    const branchName = `powerplant/${runId}`
+
+    // Pre-existing untracked file in the working tree — simulates in-progress work
+    fs.writeFileSync(path.join(sourceDir, 'unrelated.ts'), 'export const y = 99\n')
+
+    spawnSync('git', ['checkout', '-b', branchName], { cwd: sourceDir })
+
+    // Apply with --index: stages only patched files
+    spawnSync('git', ['apply', '--index', patchFile], { cwd: sourceDir })
+
+    const msg = `feat: patch only\n\nPowerplant-Run: ${runId}\nEvidence-Hash: abc\nVerification: PASS\n`
+    const tmpMsg = path.join(os.tmpdir(), `pp-test-msg-${Date.now()}.txt`)
+    fs.writeFileSync(tmpMsg, msg)
+    spawnSync('git', ['commit', '--file', tmpMsg], { cwd: sourceDir })
+    fs.unlinkSync(tmpMsg)
+    fs.unlinkSync(patchFile)
+
+    // The commit must contain hello.ts but NOT unrelated.ts
+    const showFiles = spawnSync('git', ['show', '--name-only', '--format='], { cwd: sourceDir, encoding: 'utf-8' })
+    const committedFiles = showFiles.stdout.trim().split('\n').filter(Boolean)
+    expect(committedFiles).toContain('hello.ts')
+    expect(committedFiles).not.toContain('unrelated.ts')
+
+    // The untracked file must still exist in the working tree
+    expect(fs.existsSync(path.join(sourceDir, 'unrelated.ts'))).toBe(true)
   })
 })
 

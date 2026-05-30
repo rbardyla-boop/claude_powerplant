@@ -55,17 +55,18 @@ function gitCreateBranch(branchName: string, projectPath: string): boolean {
   return r.status === 0 && !r.error
 }
 
+/**
+ * Apply a patch file to both the working tree and index using --index.
+ * This stages exactly the files touched by the patch and nothing else,
+ * preventing pre-existing working-tree changes from being swept into the
+ * commit by a subsequent "git add -A".
+ */
 function gitApplyPatch(patchPath: string, projectPath: string): { ok: boolean; stderr: string } {
-  const r = spawnSync('git', ['apply', patchPath], {
+  const r = spawnSync('git', ['apply', '--index', patchPath], {
     cwd: projectPath,
     encoding: 'utf-8',
   })
   return { ok: r.status === 0 && !r.error, stderr: r.stderr ?? '' }
-}
-
-function gitAddAll(projectPath: string): boolean {
-  const r = spawnSync('git', ['add', '-A'], { cwd: projectPath, encoding: 'utf-8' })
-  return r.status === 0 && !r.error
 }
 
 function gitCommitWithFile(msgFile: string, projectPath: string): { ok: boolean; stderr: string } {
@@ -230,18 +231,13 @@ export async function cmdApprove(args: string[]): Promise<void> {
   // From here: any failure must clean up the branch
   let commitSha = ''
   try {
-    // 10. Apply patch
+    // 10. Apply patch (--index stages exactly the patch files, nothing more)
     const applyResult = gitApplyPatch(patchPath, projectPath)
     if (!applyResult.ok) {
       throw new Error(`git apply failed:\n${applyResult.stderr}`)
     }
 
-    // 11. Stage all
-    if (!gitAddAll(projectPath)) {
-      throw new Error('git add -A failed')
-    }
-
-    // 12. Commit
+    // 11. Commit (index is already staged by git apply --index)
     const commitMessage = buildCommitMessage(taskSubject, runId, evidenceHash, verificationStatus)
     const tmpMsg = path.join(os.tmpdir(), `pp-commit-msg-${Date.now()}.txt`)
     fs.writeFileSync(tmpMsg, commitMessage)
