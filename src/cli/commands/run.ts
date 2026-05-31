@@ -267,6 +267,7 @@ export async function cmdRun(
     sourceUnmodified: sourceVerification.sourceUnmodified,
     artifactDir: patchDir,
     patchDiff,
+    patchArtifactsWritten: brokerResult.patchPackage !== null,
   })
 
   if (!passed) process.exit(1)

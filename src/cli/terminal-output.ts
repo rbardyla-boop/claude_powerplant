@@ -184,10 +184,17 @@ export function printRunSummary(opts: {
   sourceUnmodified: boolean
   artifactDir: string
   patchDiff: string
+  /**
+   * True only when the patch package (PATCH.diff, VERIFICATION_REPORT.md, …)
+   * was actually generated. On a FAILED_INCOMPLETE_AGENT_RUN no package is
+   * written, so the summary must not point at artifacts that do not exist.
+   */
+  patchArtifactsWritten: boolean
 }): void {
   const {
     runId, task, passed, testsPassed, customToolCounts,
     builtInToolUseCount, patchFiles, sourceUnmodified, artifactDir, patchDiff,
+    patchArtifactsWritten,
   } = opts
   console.log()
   console.log('Run complete.')
@@ -233,6 +240,16 @@ export function printRunSummary(opts: {
   console.log(`Built-in tools used:    ${builtInToolUseCount}`)
   console.log(`Custom tool calls:      ${JSON.stringify(customToolCounts)}`)
   console.log()
+
+  // When no patch package was generated (FAILED_INCOMPLETE_AGENT_RUN), neither
+  // PATCH.diff nor VERIFICATION_REPORT.md exist on disk. Pointing the user at
+  // them would be a false claim — only RUN_CLASSIFICATION.json is written.
+  if (!patchArtifactsWritten) {
+    console.log('No patch produced — the agent run did not complete.')
+    console.log(`  ${artifactDir}/RUN_CLASSIFICATION.json`)
+    return
+  }
+
   console.log('Patch ready:')
   console.log(`  ${artifactDir}/PATCH.diff`)
   console.log()
