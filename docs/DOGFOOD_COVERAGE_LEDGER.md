@@ -34,6 +34,7 @@ Two risk modes are tracked:
 | Tauri / Vite / Rust hybrid (Steam game) | Mechanical | sinularity | ✅ Covered | observed `pp-run-…0335863` |
 | ML / research pipeline (result-ledger boundary) | Epistemic | pipeline (NN research) | ✅ Covered | observed (v0.2.9) |
 | Research manuscript (no-claims boundary) | Epistemic | lcb_paper2 | ✅ Covered | observed `pp-run-…1393275` |
+| Python desktop/pipeline app (code-write integrity + secret containment) | Mechanical (code-write) | Screenpipe-to-Obsidian | ✅ Covered | observed `pp-run-…5896383`, merge `f009688`, hash `b76af6cb…` |
 
 ---
 
@@ -63,6 +64,14 @@ will be approved.** The guard rejects the corrupt write at the boundary, composi
 incomplete-run fix (rejected write → honest `FAILED_INCOMPLETE`, no corrupt patch). Reject-not-repair:
 Powerplant does not unescape content, which could corrupt legitimate string data. Detector validated
 against the real artifact (412 escaped `\n`, 1 real newline, 17139-char line).
+
+**Live-verified in both directions** (closes the "will it false-positive on normal code?" question
+with run evidence, not just unit tests):
+
+- **Corrupt artifact rejected** — the poly salvage case: escaped-newline single-line source.
+- **Legitimate artifact accepted** — Screenpipe-to-Obsidian dogfood (`pp-run-…5896383`): the agent
+  wrote a 138-line multi-line Python test (`@@ -0,0 +1,138 @@`, 0 literal `\n`, longest line 103 chars)
+  that the guard let through; it materialized with real newlines and passed `py_compile`.
 
 ---
 
