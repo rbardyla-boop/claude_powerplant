@@ -20,6 +20,18 @@ const CODE_EXTENSIONS: ReadonlySet<string> = new Set([
   '.c', '.h', '.cc', '.cpp', '.hpp', '.cs', '.rb', '.php', '.sh',
 ])
 
+/**
+ * Prose/document-deliverable extensions. Powerplant's audit/report deliverables
+ * are Markdown (e.g. docs/STEAM_BETA_AUDIT.md), and a real multi-section report
+ * has many physical newlines — so the same escaped-newline signature catches a
+ * single-line escaped artifact without flagging normal prose. Added after a
+ * Steam-beta audit run materialized a one-line escaped Markdown report that
+ * still "passed" review.
+ */
+const DOC_EXTENSIONS: ReadonlySet<string> = new Set([
+  '.md', '.markdown', '.txt', '.rst',
+])
+
 export interface CorruptionResult {
   readonly corrupt: boolean
   readonly reason?: string
@@ -35,8 +47,9 @@ function extensionOf(relPath: string): string {
  * roughly one physical line but carrying many literal "\n" escape sequences as if
  * they were line separators.
  *
- * Scoped to source-code extensions so legitimate single-line data files (JSON,
- * CSV, minified assets) are never flagged. The thresholds require ALL of:
+ * Scoped to source-code and document-deliverable extensions so legitimate
+ * single-line data files (JSON, CSV, minified assets) are never flagged. The
+ * thresholds require ALL of:
  *   - 5+ literal "\n" escape sequences,
  *   - at most 2 real newline characters,
  *   - a physical line longer than 200 characters.
@@ -47,7 +60,8 @@ export function detectNewlineEscapeCorruption(
   relPath: string,
   content: string,
 ): CorruptionResult {
-  if (!CODE_EXTENSIONS.has(extensionOf(relPath))) {
+  const ext = extensionOf(relPath)
+  if (!CODE_EXTENSIONS.has(ext) && !DOC_EXTENSIONS.has(ext)) {
     return { corrupt: false }
   }
 
