@@ -30,10 +30,12 @@ const ROUTER_NO_VERSION =
 const PKG_WITH_VERSION = JSON.stringify({ name: 'x', version: '1.0.0' })
 
 const source = new DeterministicSource()
+// discover() returns { candidates, suppressed }; most tests assert on candidates.
+const discover = (b: ScoutBundle) => source.discover(b).candidates
 
 describe('DeterministicSource: missing --version', () => {
   it('proposes a candidate when the router has no --version handler', () => {
-    const out = source.discover(bundle([
+    const out = discover(bundle([
       { relativePath: 'src/cli/powerplant.ts', content: ROUTER_NO_VERSION },
       { relativePath: 'package.json', content: PKG_WITH_VERSION },
     ]))
@@ -44,7 +46,7 @@ describe('DeterministicSource: missing --version', () => {
   })
 
   it('does NOT propose when --version already exists (negative case)', () => {
-    const out = source.discover(bundle([
+    const out = discover(bundle([
       { relativePath: 'src/cli/powerplant.ts', content: ROUTER_WITH_VERSION },
       { relativePath: 'package.json', content: PKG_WITH_VERSION },
     ]))
@@ -52,7 +54,7 @@ describe('DeterministicSource: missing --version', () => {
   })
 
   it('does NOT propose when package.json has no version field', () => {
-    const out = source.discover(bundle([
+    const out = discover(bundle([
       { relativePath: 'src/cli/powerplant.ts', content: ROUTER_NO_VERSION },
       { relativePath: 'package.json', content: '{"name":"x"}' },
     ]))
@@ -62,7 +64,7 @@ describe('DeterministicSource: missing --version', () => {
 
 describe('DeterministicSource: stack-aware test gaps', () => {
   it('Python: untested module -> RECOMMENDED test candidate when tests/** is writable', () => {
-    const out = source.discover(bundle(
+    const out = discover(bundle(
       [
         { relativePath: 'vault_sync.py', content: 'def sync(): ...' },
         { relativePath: 'requirements.txt', content: 'requests' },
@@ -79,7 +81,7 @@ describe('DeterministicSource: stack-aware test gaps', () => {
   })
 
   it('Python: covered module -> no candidate', () => {
-    const out = source.discover(bundle(
+    const out = discover(bundle(
       [
         { relativePath: 'vault_sync.py', content: 'def sync(): ...' },
         { relativePath: 'tests/test_vault_sync.py', content: 'def test_sync(): ...' },
@@ -94,13 +96,13 @@ describe('DeterministicSource: stack-aware test gaps', () => {
       allowedWritePaths: ['docs/**'],
       allowedChecks: { test: { command: '', required: true } },
     } as unknown as LoadedProjectContract
-    const out = source.discover(bundle([{ relativePath: 'vault_sync.py', content: 'x' }], 'py-demo', docsOnly))
+    const out = discover(bundle([{ relativePath: 'vault_sync.py', content: 'x' }], 'py-demo', docsOnly))
     expect(out.find(c => c.domain === 'test-gap')).toBeUndefined()
   })
 
   it('caps test-gap candidates at 3 even with many untested modules', () => {
     const files = Array.from({ length: 8 }, (_, i) => ({ relativePath: `mod_${i}.py`, content: 'x' }))
-    const gaps = source.discover(bundle(files, 'py-demo', PY_TESTS_ONLY)).filter(c => c.domain === 'test-gap')
+    const gaps = discover(bundle(files, 'py-demo', PY_TESTS_ONLY)).filter(c => c.domain === 'test-gap')
     expect(gaps.length).toBeLessThanOrEqual(3)
   })
 
@@ -113,7 +115,7 @@ describe('DeterministicSource: stack-aware test gaps', () => {
       { relativePath: 'provider.py', content: 'x' },     // hint: provider
       { relativePath: 'bbb.py', content: 'x' },
     ]
-    const titles = source.discover(bundle(files, 'py-demo', PY_TESTS_ONLY))
+    const titles = discover(bundle(files, 'py-demo', PY_TESTS_ONLY))
       .filter(c => c.domain === 'test-gap')
       .map(c => c.title)
     expect(titles.some(t => t.includes('config.py'))).toBe(true)
@@ -122,7 +124,7 @@ describe('DeterministicSource: stack-aware test gaps', () => {
   })
 
   it('TypeScript: untested src module -> bounded test candidate', () => {
-    const gap = source.discover(bundle([
+    const gap = discover(bundle([
       { relativePath: 'src/cli/commands/doctor.ts', content: 'export const cmdDoctor = () => {}' },
       { relativePath: 'tests/cli-run.test.ts', content: 'covered run' },
     ])).filter(c => c.domain === 'test-gap').find(c => c.title.includes('doctor.ts'))
@@ -131,7 +133,7 @@ describe('DeterministicSource: stack-aware test gaps', () => {
   })
 
   it('Rust: never emits a test-gap candidate (skipped, not falsely RECOMMENDED)', () => {
-    const out = source.discover(bundle([
+    const out = discover(bundle([
       { relativePath: 'src/main.rs', content: 'fn main() {}' },
       { relativePath: 'src-tauri/src/lib.rs', content: 'pub fn x() {}' },
     ], 'rust-demo', PY_TESTS_ONLY))
@@ -139,7 +141,7 @@ describe('DeterministicSource: stack-aware test gaps', () => {
   })
 
   it('subsumes the old CLI-command behavior: uncovered command flagged, covered one skipped', () => {
-    const titles = source.discover(bundle([
+    const titles = discover(bundle([
       { relativePath: 'src/cli/commands/doctor.ts', content: 'x' },
       { relativePath: 'src/cli/commands/run.ts', content: 'x' },
       { relativePath: 'tests/cli-run.test.ts', content: 'covered' },
@@ -151,7 +153,7 @@ describe('DeterministicSource: stack-aware test gaps', () => {
 
 describe('DeterministicSource: candidate-quality ranking', () => {
   const testGapTitles = (files: ScoutBundleFile[]): string[] =>
-    source.discover(bundle(files, 'py-demo', PY_TESTS_ONLY))
+    discover(bundle(files, 'py-demo', PY_TESTS_ONLY))
       .filter(c => c.domain === 'test-gap')
       .map(c => c.title)
 
@@ -206,7 +208,7 @@ describe('DeterministicSource: candidate-quality ranking', () => {
 
 describe('DeterministicSource: README/router mismatch', () => {
   it('flags a documented command the router does not handle', () => {
-    const out = source.discover(bundle(
+    const out = discover(bundle(
       [
         { relativePath: 'src/cli/powerplant.ts', content: ROUTER_WITH_VERSION },
         { relativePath: 'package.json', content: PKG_WITH_VERSION },
@@ -222,7 +224,7 @@ describe('DeterministicSource: README/router mismatch', () => {
   it('does not throw when projectId contains regex metacharacters', () => {
     // projectId is user-controlled (POLICY.yaml) and feeds the docs regex.
     expect(() =>
-      source.discover(bundle(
+      discover(bundle(
         [
           { relativePath: 'src/cli/powerplant.ts', content: ROUTER_WITH_VERSION },
           { relativePath: 'package.json', content: PKG_WITH_VERSION },
@@ -234,7 +236,7 @@ describe('DeterministicSource: README/router mismatch', () => {
   })
 
   it('does not flag commands the router DOES handle', () => {
-    const out = source.discover(bundle(
+    const out = discover(bundle(
       [
         { relativePath: 'src/cli/powerplant.ts', content: ROUTER_WITH_VERSION },
         { relativePath: 'package.json', content: PKG_WITH_VERSION },
@@ -248,7 +250,7 @@ describe('DeterministicSource: README/router mismatch', () => {
 
 describe('DeterministicSource: id assignment', () => {
   it('assigns sequential scout-NNN ids', () => {
-    const out = source.discover(bundle([
+    const out = discover(bundle([
       { relativePath: 'src/cli/powerplant.ts', content: ROUTER_NO_VERSION },
       { relativePath: 'package.json', content: PKG_WITH_VERSION },
       { relativePath: 'src/cli/commands/doctor.ts', content: 'x' },

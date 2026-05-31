@@ -3,7 +3,7 @@ import path from 'path'
 import { buildPilotSnapshot } from '../projects/build-pilot-snapshot.js'
 import { detectStack } from '../projects/detect-stack.js'
 import type { LoadedProjectContract } from '../projects/load-project-contract.js'
-import type { CandidateSource, ScoutBundle, ScoutBundleFile } from './candidate-source.js'
+import type { CandidateSource, ScoutBundle, ScoutBundleFile, SuppressionNote } from './candidate-source.js'
 import { DeterministicSource } from './deterministic-source.js'
 import { ProposedCandidateSchema, normalizeCandidate, type ScoutCandidate } from './scout-candidate.js'
 
@@ -23,6 +23,8 @@ export interface ScoutReport {
   /** How many sanitized files were reasoned over. */
   bundleFileCount: number
   candidates: ScoutCandidate[]
+  /** Candidate-shaped evidence the contract blocked (informational, never runnable). */
+  suppressed: SuppressionNote[]
 }
 
 /** Read the text files from a sanitized baseline. Binary and oversized files are skipped. */
@@ -73,8 +75,11 @@ export function scanProject(
     const bundle: ScoutBundle = { projectId: contract.projectId, stack, files, contract }
 
     const candidates: ScoutCandidate[] = []
+    const suppressed: SuppressionNote[] = []
     for (const source of sources) {
-      for (const raw of source.discover(bundle)) {
+      const result = source.discover(bundle)
+      suppressed.push(...result.suppressed)
+      for (const raw of result.candidates) {
         // Source output is untrusted (especially future LLM sources): validate,
         // then re-id sequentially so two sources cannot collide on an id.
         const parsed = ProposedCandidateSchema.safeParse(raw)
@@ -93,6 +98,7 @@ export function scanProject(
       sourceIds: sources.map(s => s.id),
       bundleFileCount: files.length,
       candidates,
+      suppressed,
     }
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true })

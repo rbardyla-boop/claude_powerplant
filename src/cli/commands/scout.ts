@@ -94,6 +94,10 @@ export async function cmdScout(rest: string[]): Promise<void> {
     const n = counts.get(status) ?? 0
     if (n > 0) console.log(`  ${status.padEnd(20)} ${n}`)
   }
+  // Suppressed findings: candidate-shaped evidence the contract blocked.
+  for (const s of report.suppressed) {
+    console.log(`  ${s.count} ${s.domain} suppressed: ${s.reason} (e.g. ${s.example})`)
+  }
   console.log()
   console.log(`  ${path.join(scoutDir, 'CANDIDATES.md')}`)
   console.log(`  ${path.join(scoutDir, 'candidates.json')}`)

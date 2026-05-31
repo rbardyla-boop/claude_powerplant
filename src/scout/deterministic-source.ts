@@ -1,5 +1,5 @@
 import path from 'path'
-import type { CandidateSource, ScoutBundle, ScoutBundleFile } from './candidate-source.js'
+import type { CandidateSource, ScoutBundle, ScoutBundleFile, DiscoveryResult, SuppressionNote } from './candidate-source.js'
 import { filesOutsideWriteCeiling } from './scout-candidate.js'
 import type { ProposedCandidate, ScoutDomain, ScoutRisk } from './scout-candidate.js'
 
@@ -199,15 +199,19 @@ const detectDocsMismatch: Heuristic = bundle => {
 // a TS module under src/). Fires on Python and TS/JS modules. Rust is
 // intentionally skipped — inline `#[cfg(test)]` / integration-test conventions
 // need more precise analysis before we can RECOMMEND a test file. A candidate is
-// only emitted when its proposed test path is inside the contract write ceiling,
-// so test-gaps never surface as REJECT noise.
-const detectTestGaps: Heuristic = bundle => {
+// only emitted when its proposed test path is inside the contract write ceiling.
+// A real test-gap blocked ONLY by the ceiling is not dropped silently — it is
+// counted into an aggregate SuppressionNote (informational; never a candidate,
+// never a file, never runnable), so "0 candidates" can be explained honestly.
+function detectTestGaps(bundle: ScoutBundle): { candidates: DraftCandidate[]; suppressed: SuppressionNote[] } {
   const testHaystack = bundle.files
     .filter(f => isTestFile(f.relativePath))
     .map(f => f.relativePath.toLowerCase())
     .join('\n')
 
   const drafts: Array<{ rel: string; base: string; testPath: string; isPython: boolean }> = []
+  let suppressedCount = 0
+  let suppressedExample = ''
   for (const f of bundle.files) {
     const rel = f.relativePath
     if (isTestGapExcluded(rel)) continue
@@ -219,16 +223,19 @@ const detectTestGaps: Heuristic = bundle => {
     } else if (/^src\/.*\.[jt]sx?$/.test(rel)) {
       testPath = `tests/${moduleBase(rel)}.test.ts`
     } else {
-      continue // .rs and everything else: no RECOMMENDED test-gap yet
+      continue // .rs and everything else: out of scope, not a ceiling suppression
     }
 
     const base = moduleBase(rel)
     // Conservative: a substring match in any test path counts as covered.
     if (testHaystack.includes(base.toLowerCase())) continue
-    // Only emit when the proposed test file is writable under the contract —
-    // otherwise this would just be REJECT noise. (Eligibility gate; the score
-    // below only reorders the eligible candidates.)
-    if (filesOutsideWriteCeiling([testPath], bundle.contract.allowedWritePaths).length > 0) continue
+    // A real test-gap whose test file the contract forbids writing: suppress it
+    // (count for visibility) — never propose an out-of-ceiling file.
+    if (filesOutsideWriteCeiling([testPath], bundle.contract.allowedWritePaths).length > 0) {
+      suppressedCount += 1
+      if (!suppressedExample) suppressedExample = testPath
+      continue
+    }
 
     drafts.push({ rel, base, testPath, isPython })
   }
@@ -236,7 +243,7 @@ const detectTestGaps: Heuristic = bundle => {
   // Rank by usefulness (app-facing & importable first), then cap so this stays
   // a few small affordances. Ranking only — every eligible draft is kept here.
   drafts.sort((a, b) => candidateScore(b.rel, b.base, b.isPython) - candidateScore(a.rel, a.base, a.isPython))
-  return drafts.slice(0, TEST_GAP_CAP).map(d =>
+  const candidates = drafts.slice(0, TEST_GAP_CAP).map(d =>
     draft(
       'test-gap',
       `Add a test for ${d.rel}`,
@@ -248,24 +255,33 @@ const detectTestGaps: Heuristic = bundle => {
       'LOW',
     ),
   )
+
+  const suppressed: SuppressionNote[] =
+    suppressedCount > 0
+      ? [{ domain: 'test-gap', reason: 'outside allowedWritePaths', count: suppressedCount, example: suppressedExample }]
+      : []
+  return { candidates, suppressed }
 }
 
 // ── Deterministic source ──────────────────────────────────────────────────────
 
-const HEURISTICS: Heuristic[] = [
+// Candidate-only heuristics (no suppression tracking). detectTestGaps is run
+// separately because it also reports suppressions.
+const CANDIDATE_HEURISTICS: Heuristic[] = [
   detectMissingVersion,
   detectDocsMismatch,
-  detectTestGaps,
 ]
 
 export class DeterministicSource implements CandidateSource {
   readonly id = 'deterministic-v1'
 
-  discover(bundle: ScoutBundle): ProposedCandidate[] {
-    const drafts = HEURISTICS.flatMap(h => h(bundle))
-    return drafts.map((d, i) => ({
-      ...d,
-      id: `scout-${String(i + 1).padStart(3, '0')}`,
-    }))
+  discover(bundle: ScoutBundle): DiscoveryResult {
+    const heuristicDrafts = CANDIDATE_HEURISTICS.flatMap(h => h(bundle))
+    const testGaps = detectTestGaps(bundle)
+    const drafts = [...heuristicDrafts, ...testGaps.candidates]
+    return {
+      candidates: drafts.map((d, i) => ({ ...d, id: `scout-${String(i + 1).padStart(3, '0')}` })),
+      suppressed: testGaps.suppressed,
+    }
   }
 }

@@ -62,8 +62,25 @@ export function renderCandidatesMarkdown(report: ScoutReport): string {
   }
   out.push('')
 
+  // Suppressed — candidate-shaped evidence the contract blocked. Informational
+  // only: not candidates, no candidate files, never runnable.
+  if (report.suppressed.length > 0) {
+    out.push('## Suppressed — not actionable under this contract')
+    out.push('')
+    out.push('| Domain | Count | Reason | Example |')
+    out.push('| --- | --- | --- | --- |')
+    for (const s of report.suppressed) {
+      out.push(`| ${s.domain} | ${s.count} | ${s.reason} | \`${s.example}\` |`)
+    }
+    out.push('')
+  }
+
   if (report.candidates.length === 0) {
-    out.push('_No affordances found in the sanitized bundle._')
+    out.push(
+      report.suppressed.length > 0
+        ? '_No actionable candidates under this contract (see Suppressed above)._'
+        : '_No affordances found in the sanitized bundle._',
+    )
     out.push('')
     return out.join('\n')
   }
