@@ -26,6 +26,15 @@ function validateProjectPath(projectPath: string): string {
 
 const STATUS_ORDER: ScoutStatus[] = ['RECOMMENDED', 'NEEDS_USER_DECISION', 'DEFER', 'REJECT']
 
+/**
+ * Make the advisory `.scout/` directory self-ignoring so it never pollutes a
+ * clean-tree check in the target repo. `.scout/` is regenerated on every scan
+ * and is never authoritative, so it should not appear in `git status`.
+ */
+export function writeScoutGitignore(scoutDir: string): void {
+  fs.writeFileSync(path.join(scoutDir, '.gitignore'), '*\n', 'utf-8')
+}
+
 export async function cmdScout(rest: string[]): Promise<void> {
   const jsonMode = rest.includes('--json')
   const projectPath = rest.find(a => !a.startsWith('-')) ?? process.cwd()
@@ -58,6 +67,8 @@ export async function cmdScout(rest: string[]): Promise<void> {
   const scoutDir = path.join(absPath, '.scout')
   const candidatesDir = path.join(scoutDir, 'candidates')
   fs.mkdirSync(scoutDir, { recursive: true })
+  // Keep .scout/ out of git so it never pollutes a clean-tree check.
+  writeScoutGitignore(scoutDir)
   // Clear stale per-candidate files so old ids do not linger across scans.
   fs.rmSync(candidatesDir, { recursive: true, force: true })
   fs.mkdirSync(candidatesDir, { recursive: true })

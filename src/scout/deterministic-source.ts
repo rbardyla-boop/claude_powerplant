@@ -22,11 +22,18 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** A declared check ID to attach to a candidate. Prefers a test-like check. */
+/**
+ * A declared check ID to attach to a candidate. Prefers a REQUIRED check — the
+ * hermetic gate that actually runs in the network-disabled, deps-excluded
+ * sandbox — over an advisory one (e.g. dependency-bound pytest), and a
+ * test-like name within that preference. Falls back to the first declared check.
+ */
 function pickCheckId(bundle: ScoutBundle): string {
-  const ids = Object.keys(bundle.contract.allowedChecks)
+  const entries = Object.entries(bundle.contract.allowedChecks)
   // loadProjectContract guarantees at least one declared check.
-  return ids.find(id => /test/i.test(id)) ?? ids[0]!
+  const required = entries.filter(([, c]) => c.required)
+  const pool = required.length > 0 ? required : entries
+  return (pool.find(([id]) => /test/i.test(id)) ?? pool[0]!)[0]
 }
 
 // ── Test-gap helpers ──────────────────────────────────────────────────────────

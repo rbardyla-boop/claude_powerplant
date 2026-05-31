@@ -14,6 +14,8 @@ const REQUIRED_EXCLUDES = [
   '**/venv/**',
   '**/__pycache__/**',
   '**/.pytest_cache/**',
+  // Scout's own advisory output — never feed a prior scan back into a bundle.
+  '.scout/**',
 ]
 
 const RUST_EXCLUDES = [
