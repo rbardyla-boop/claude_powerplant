@@ -4,6 +4,8 @@ import {
   normalizeCandidate,
   filesOutsideWriteCeiling,
   checksNotDeclared,
+  checkCommandCoversPath,
+  classifyVerificationCoverage,
   type ProposedCandidate,
 } from '../src/scout/scout-candidate.js'
 
@@ -80,5 +82,67 @@ describe('normalizeCandidate verdict assignment', () => {
     // Even though the proposal claims LOW risk, an undeclared check forces REJECT.
     const result = normalizeCandidate(proposed({ risk: 'LOW', verification: ['ghost'] }), CONTRACT)
     expect(result.status).toBe('REJECT')
+  })
+})
+
+describe('checkCommandCoversPath', () => {
+  const cases: Array<[string, string, boolean]> = [
+    ['python3 -m compileall -q .', 'tests/test_x.py', true],
+    ['python3 -m py_compile main.py orchestrator.py', 'tests/test_x.py', false],
+    ['python3 -m py_compile main.py tests/test_x.py', 'tests/test_x.py', true],
+    ['grep typecheck package.json', 'src/engine/tests/foo.test.ts', false],
+    ['python3 -m pytest', 'tests/test_x.py', true],
+    ['npm run typecheck', 'src/engine/tests/foo.test.ts', true],
+    ['echo ok', 'tests/test_x.py', false],
+  ]
+  it.each(cases)('%s vs %s -> %s', (cmd, path, expected) => {
+    expect(checkCommandCoversPath(cmd, path)).toBe(expected)
+  })
+})
+
+describe('classifyVerificationCoverage', () => {
+  it('strong: Screenpipe required compileall covers the generated Python test', () => {
+    const cov = classifyVerificationCoverage(
+      ['scripts-syntax'], ['tests/test_ai_provider.py'],
+      { 'scripts-syntax': { command: 'python3 -m compileall -q .', required: true } },
+    )
+    expect(cov.strength).toBe('strong')
+  })
+
+  it('weak: poly required py_compile does not cover tests/test_config.py', () => {
+    const cov = classifyVerificationCoverage(
+      ['syntax-check'], ['tests/test_config.py'],
+      { 'syntax-check': { command: 'python3 -m py_compile main.py monitor/exit_monitor.py orchestrator.py', required: true } },
+    )
+    expect(cov.strength).toBe('weak')
+  })
+
+  it('weak: Sinularity required grep does not cover src/engine/tests/*.test.ts', () => {
+    const cov = classifyVerificationCoverage(
+      ['scripts-present'], ['src/engine/tests/foo.test.ts'],
+      { 'scripts-present': { command: 'grep typecheck package.json', required: true } },
+    )
+    expect(cov.strength).toBe('weak')
+  })
+
+  it('advisory-only: selected check is advisory (no required check available)', () => {
+    const cov = classifyVerificationCoverage(
+      ['tests'], ['tests/test_x.py'],
+      { tests: { command: 'python3 -m pytest', required: false } },
+    )
+    expect(cov.strength).toBe('advisory-only')
+  })
+
+  it('normalizeCandidate attaches verificationCoverage (does not change status)', () => {
+    const weakContract = {
+      allowedWritePaths: ['tests/**'],
+      allowedChecks: { 'scripts-present': { command: 'grep x package.json', required: true } },
+    }
+    const result = normalizeCandidate(
+      proposed({ expectedFiles: ['tests/test_foo.py'], verification: ['scripts-present'] }),
+      weakContract,
+    )
+    expect(result.status).toBe('RECOMMENDED') // still recommended — coverage is a signal, not a gate
+    expect(result.verificationCoverage!.strength).toBe('weak')
   })
 })
