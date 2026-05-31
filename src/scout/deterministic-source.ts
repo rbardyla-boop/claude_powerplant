@@ -34,7 +34,12 @@ function pickCheckId(bundle: ScoutBundle): string {
 // Test-gap stays a few small affordances, never an audit dump of every module.
 const TEST_GAP_CAP = 3
 // App-facing module names worth covering first.
-const PRIORITY_HINTS = ['config', 'path', 'sync', 'provider', 'cli', 'service']
+const APP_HINTS = ['config', 'path', 'provider', 'sync', 'service']
+// Directory segments that hold hook/utility oddities, not core app modules.
+const DEPRIORITIZED_DIRS = ['.claude', 'hooks', 'scripts', 'bin', 'examples']
+const APP_HINT_WEIGHT = 2
+const LOCATION_PENALTY = 3
+const NON_IMPORTABLE_PENALTY = 2
 
 /** Module name without its extension (e.g. 'src/a/foo.ts' -> 'foo'). */
 function moduleBase(rel: string): string {
@@ -42,10 +47,29 @@ function moduleBase(rel: string): string {
   return file.replace(/\.(py|tsx?|jsx?)$/, '')
 }
 
-/** How many app-facing hints a module name contains (higher = covered sooner). */
-function priorityScore(base: string): number {
+/** A valid Python module identifier — importable as a normal module. */
+function isImportablePythonName(base: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(base)
+}
+
+/** Path sits under a hook/script/example directory segment. */
+function inDeprioritizedLocation(rel: string): boolean {
+  const segs = rel.toLowerCase().split('/')
+  return segs.some(s => DEPRIORITIZED_DIRS.includes(s))
+}
+
+/**
+ * Ranking score for a test-gap candidate — higher ranks sooner. This is a
+ * RANKING layer, never an eligibility gate: awkward candidates are down-ranked,
+ * not excluded, so evidence is preserved. Prefers importable, app-facing modules
+ * over hook/utility scripts and non-importable filenames.
+ */
+function candidateScore(rel: string, base: string, isPython: boolean): number {
   const lower = base.toLowerCase()
-  return PRIORITY_HINTS.reduce((n, hint) => (lower.includes(hint) ? n + 1 : n), 0)
+  let score = APP_HINTS.reduce((n, hint) => (lower.includes(hint) ? n + APP_HINT_WEIGHT : n), 0)
+  if (inDeprioritizedLocation(rel)) score -= LOCATION_PENALTY
+  if (isPython && !isImportablePythonName(base)) score -= NON_IMPORTABLE_PENALTY
+  return score
 }
 
 /** A file that is a test, used to decide whether a module is already covered. */
@@ -176,13 +200,14 @@ const detectTestGaps: Heuristic = bundle => {
     .map(f => f.relativePath.toLowerCase())
     .join('\n')
 
-  const drafts: Array<{ rel: string; base: string; testPath: string }> = []
+  const drafts: Array<{ rel: string; base: string; testPath: string; isPython: boolean }> = []
   for (const f of bundle.files) {
     const rel = f.relativePath
     if (isTestGapExcluded(rel)) continue
 
+    const isPython = /\.py$/.test(rel)
     let testPath: string
-    if (/\.py$/.test(rel)) {
+    if (isPython) {
       testPath = `tests/test_${moduleBase(rel)}.py`
     } else if (/^src\/.*\.[jt]sx?$/.test(rel)) {
       testPath = `tests/${moduleBase(rel)}.test.ts`
@@ -194,14 +219,16 @@ const detectTestGaps: Heuristic = bundle => {
     // Conservative: a substring match in any test path counts as covered.
     if (testHaystack.includes(base.toLowerCase())) continue
     // Only emit when the proposed test file is writable under the contract —
-    // otherwise this would just be REJECT noise.
+    // otherwise this would just be REJECT noise. (Eligibility gate; the score
+    // below only reorders the eligible candidates.)
     if (filesOutsideWriteCeiling([testPath], bundle.contract.allowedWritePaths).length > 0) continue
 
-    drafts.push({ rel, base, testPath })
+    drafts.push({ rel, base, testPath, isPython })
   }
 
-  // App-facing modules first, then cap so this stays a few small affordances.
-  drafts.sort((a, b) => priorityScore(b.base) - priorityScore(a.base))
+  // Rank by usefulness (app-facing & importable first), then cap so this stays
+  // a few small affordances. Ranking only — every eligible draft is kept here.
+  drafts.sort((a, b) => candidateScore(b.rel, b.base, b.isPython) - candidateScore(a.rel, a.base, a.isPython))
   return drafts.slice(0, TEST_GAP_CAP).map(d =>
     draft(
       'test-gap',
