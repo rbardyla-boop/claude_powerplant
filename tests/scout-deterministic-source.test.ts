@@ -261,3 +261,38 @@ describe('DeterministicSource: id assignment', () => {
     expect(new Set(ids).size).toBe(ids.length) // unique
   })
 })
+
+describe('DeterministicSource: test-root inference', () => {
+  const ck = { test: { command: 'x', required: true } }
+  const TESTS_TOP = { allowedWritePaths: ['tests/**'], allowedChecks: ck } as unknown as LoadedProjectContract
+  const ENGINE_TESTS = { allowedWritePaths: ['src/engine/tests/**'], allowedChecks: ck } as unknown as LoadedProjectContract
+  const AUDIT_ONLY = { allowedWritePaths: ['tests/POWERPLANT_AUDIT.md'], allowedChecks: ck } as unknown as LoadedProjectContract
+  const BOTH = { allowedWritePaths: ['tests/**', 'src/engine/tests/**'], allowedChecks: ck } as unknown as LoadedProjectContract
+
+  it('keeps top-level tests/** behavior for a Python module (Screenpipe)', () => {
+    const gap = discover(bundle([{ relativePath: 'ai_provider.py', content: 'x' }], 'py', TESTS_TOP))
+      .find(c => c.domain === 'test-gap')
+    expect(gap!.expectedFiles).toEqual(['tests/test_ai_provider.py'])
+  })
+
+  it('infers a non-standard test root (src/engine/tests/**) instead of suppressing (Sinularity)', () => {
+    const result = source.discover(bundle([{ relativePath: 'src/engine/foo.ts', content: 'x' }], 'sin', ENGINE_TESTS))
+    const gap = result.candidates.find(c => c.domain === 'test-gap')
+    expect(gap).toBeDefined()
+    expect(gap!.expectedFiles).toEqual(['src/engine/tests/foo.test.ts'])
+    expect(result.suppressed).toEqual([]) // no longer suppressed
+  })
+
+  it('still suppresses when the contract has no writable test root (Pipeline audit-only)', () => {
+    const result = source.discover(bundle([{ relativePath: 'engine.py', content: 'x' }], 'pl', AUDIT_ONLY))
+    expect(result.candidates).toEqual([])
+    expect(result.suppressed).toHaveLength(1)
+    expect(result.suppressed[0]!.reason).toBe('outside allowedWritePaths')
+  })
+
+  it('chooses the closest test root when top-level and nested both exist', () => {
+    const gap = discover(bundle([{ relativePath: 'src/engine/foo.ts', content: 'x' }], 'x', BOTH))
+      .find(c => c.domain === 'test-gap')
+    expect(gap!.expectedFiles).toEqual(['src/engine/tests/foo.test.ts'])
+  })
+})
