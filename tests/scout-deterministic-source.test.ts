@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { DeterministicSource } from '../src/scout/deterministic-source.js'
+import { normalizeCandidate } from '../src/scout/scout-candidate.js'
 import type { ScoutBundle, ScoutBundleFile } from '../src/scout/candidate-source.js'
 import type { LoadedProjectContract } from '../src/projects/load-project-contract.js'
 
@@ -8,8 +9,18 @@ const CONTRACT = {
   allowedChecks: { test: { command: 'npm test', required: true } },
 } as unknown as LoadedProjectContract
 
-function bundle(files: ScoutBundleFile[], projectId = 'powerplant-abc'): ScoutBundle {
-  return { projectId, stack: 'node-ts', files, contract: CONTRACT }
+// Mirrors Screenpipe-to-Obsidian: only the test dir is writable.
+const PY_TESTS_ONLY = {
+  allowedWritePaths: ['tests/**'],
+  allowedChecks: { 'scripts-syntax': { command: 'python3 -m compileall -q .', required: true } },
+} as unknown as LoadedProjectContract
+
+function bundle(
+  files: ScoutBundleFile[],
+  projectId = 'powerplant-abc',
+  contract: LoadedProjectContract = CONTRACT,
+): ScoutBundle {
+  return { projectId, stack: 'node-ts', files, contract }
 }
 
 const ROUTER_WITH_VERSION =
@@ -49,21 +60,92 @@ describe('DeterministicSource: missing --version', () => {
   })
 })
 
-describe('DeterministicSource: CLI command test gaps', () => {
-  it('proposes a test for an uncovered command, skips covered ones', () => {
-    const out = source.discover(bundle([
-      { relativePath: 'src/cli/powerplant.ts', content: ROUTER_WITH_VERSION },
-      { relativePath: 'package.json', content: PKG_WITH_VERSION },
+describe('DeterministicSource: stack-aware test gaps', () => {
+  it('Python: untested module -> RECOMMENDED test candidate when tests/** is writable', () => {
+    const out = source.discover(bundle(
+      [
+        { relativePath: 'vault_sync.py', content: 'def sync(): ...' },
+        { relativePath: 'requirements.txt', content: 'requests' },
+      ],
+      'py-demo', PY_TESTS_ONLY,
+    ))
+    const gap = out.find(c => c.domain === 'test-gap')
+    expect(gap).toBeDefined()
+    // Expected write is a test file, never product code.
+    expect(gap!.expectedFiles).toEqual(['tests/test_vault_sync.py'])
+    expect(gap!.expectedFiles.every(f => f.startsWith('tests/'))).toBe(true)
+    // End-to-end verdict is RECOMMENDED (low-risk, in-ceiling, declared check).
+    expect(normalizeCandidate(gap!, PY_TESTS_ONLY).status).toBe('RECOMMENDED')
+  })
+
+  it('Python: covered module -> no candidate', () => {
+    const out = source.discover(bundle(
+      [
+        { relativePath: 'vault_sync.py', content: 'def sync(): ...' },
+        { relativePath: 'tests/test_vault_sync.py', content: 'def test_sync(): ...' },
+      ],
+      'py-demo', PY_TESTS_ONLY,
+    ))
+    expect(out.find(c => c.domain === 'test-gap')).toBeUndefined()
+  })
+
+  it('Python: emits nothing when the test dir is outside the write ceiling', () => {
+    const docsOnly = {
+      allowedWritePaths: ['docs/**'],
+      allowedChecks: { test: { command: '', required: true } },
+    } as unknown as LoadedProjectContract
+    const out = source.discover(bundle([{ relativePath: 'vault_sync.py', content: 'x' }], 'py-demo', docsOnly))
+    expect(out.find(c => c.domain === 'test-gap')).toBeUndefined()
+  })
+
+  it('caps test-gap candidates at 3 even with many untested modules', () => {
+    const files = Array.from({ length: 8 }, (_, i) => ({ relativePath: `mod_${i}.py`, content: 'x' }))
+    const gaps = source.discover(bundle(files, 'py-demo', PY_TESTS_ONLY)).filter(c => c.domain === 'test-gap')
+    expect(gaps.length).toBeLessThanOrEqual(3)
+  })
+
+  it('prioritizes app-facing module names within the cap', () => {
+    const files = [
+      { relativePath: 'zzz.py', content: 'x' },
+      { relativePath: 'aaa.py', content: 'x' },
+      { relativePath: 'config.py', content: 'x' },      // hint: config
+      { relativePath: 'sync_engine.py', content: 'x' },  // hint: sync
+      { relativePath: 'provider.py', content: 'x' },     // hint: provider
+      { relativePath: 'bbb.py', content: 'x' },
+    ]
+    const titles = source.discover(bundle(files, 'py-demo', PY_TESTS_ONLY))
+      .filter(c => c.domain === 'test-gap')
+      .map(c => c.title)
+    expect(titles.some(t => t.includes('config.py'))).toBe(true)
+    expect(titles.some(t => t.includes('sync_engine.py'))).toBe(true)
+    expect(titles.some(t => t.includes('provider.py'))).toBe(true)
+  })
+
+  it('TypeScript: untested src module -> bounded test candidate', () => {
+    const gap = source.discover(bundle([
       { relativePath: 'src/cli/commands/doctor.ts', content: 'export const cmdDoctor = () => {}' },
-      { relativePath: 'src/cli/commands/run.ts', content: 'export const cmdRun = () => {}' },
-      { relativePath: 'tests/cli-run.test.ts', content: 'test covered' },
-    ]))
-    const gaps = out.filter(c => c.domain === 'test-gap')
-    const titles = gaps.map(c => c.title)
-    expect(titles.some(t => t.includes('doctor'))).toBe(true)
-    expect(titles.some(t => t.includes('run'))).toBe(false) // covered by cli-run.test.ts
-    const doctorGap = gaps.find(c => c.title.includes('doctor'))!
-    expect(doctorGap.expectedFiles).toEqual(['tests/cli-doctor.test.ts'])
+      { relativePath: 'tests/cli-run.test.ts', content: 'covered run' },
+    ])).filter(c => c.domain === 'test-gap').find(c => c.title.includes('doctor.ts'))
+    expect(gap).toBeDefined()
+    expect(gap!.expectedFiles).toEqual(['tests/doctor.test.ts'])
+  })
+
+  it('Rust: never emits a test-gap candidate (skipped, not falsely RECOMMENDED)', () => {
+    const out = source.discover(bundle([
+      { relativePath: 'src/main.rs', content: 'fn main() {}' },
+      { relativePath: 'src-tauri/src/lib.rs', content: 'pub fn x() {}' },
+    ], 'rust-demo', PY_TESTS_ONLY))
+    expect(out.find(c => c.domain === 'test-gap')).toBeUndefined()
+  })
+
+  it('subsumes the old CLI-command behavior: uncovered command flagged, covered one skipped', () => {
+    const titles = source.discover(bundle([
+      { relativePath: 'src/cli/commands/doctor.ts', content: 'x' },
+      { relativePath: 'src/cli/commands/run.ts', content: 'x' },
+      { relativePath: 'tests/cli-run.test.ts', content: 'covered' },
+    ])).filter(c => c.domain === 'test-gap').map(c => c.title)
+    expect(titles.some(t => t.includes('doctor.ts'))).toBe(true)
+    expect(titles.some(t => t.includes('commands/run.ts'))).toBe(false) // 'run' covered
   })
 })
 

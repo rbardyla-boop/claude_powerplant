@@ -1,5 +1,6 @@
 import path from 'path'
 import type { CandidateSource, ScoutBundle, ScoutBundleFile } from './candidate-source.js'
+import { filesOutsideWriteCeiling } from './scout-candidate.js'
 import type { ProposedCandidate, ScoutDomain, ScoutRisk } from './scout-candidate.js'
 
 // Scout finds SMALL affordances, not an audit dump. Each heuristic is capped so
@@ -26,6 +27,43 @@ function pickCheckId(bundle: ScoutBundle): string {
   const ids = Object.keys(bundle.contract.allowedChecks)
   // loadProjectContract guarantees at least one declared check.
   return ids.find(id => /test/i.test(id)) ?? ids[0]!
+}
+
+// ── Test-gap helpers ──────────────────────────────────────────────────────────
+
+// Test-gap stays a few small affordances, never an audit dump of every module.
+const TEST_GAP_CAP = 3
+// App-facing module names worth covering first.
+const PRIORITY_HINTS = ['config', 'path', 'sync', 'provider', 'cli', 'service']
+
+/** Module name without its extension (e.g. 'src/a/foo.ts' -> 'foo'). */
+function moduleBase(rel: string): string {
+  const file = rel.split('/').pop() ?? rel
+  return file.replace(/\.(py|tsx?|jsx?)$/, '')
+}
+
+/** How many app-facing hints a module name contains (higher = covered sooner). */
+function priorityScore(base: string): number {
+  const lower = base.toLowerCase()
+  return PRIORITY_HINTS.reduce((n, hint) => (lower.includes(hint) ? n + 1 : n), 0)
+}
+
+/** A file that is a test, used to decide whether a module is already covered. */
+function isTestFile(rel: string): boolean {
+  return /(^|\/)(tests?|__tests__)\//.test(rel)
+    || /\.(test|spec)\.[jt]sx?$/.test(rel)
+    || /(^|\/)test_[^/]*\.py$/.test(rel)
+}
+
+// Paths that look like source but should never get a "needs a test" candidate:
+// existing tests, vendored/generated trees, config/declaration files, and
+// package scaffolding.
+function isTestGapExcluded(rel: string): boolean {
+  const base = rel.split('/').pop() ?? rel
+  if (isTestFile(rel)) return true
+  if (/(^|\/)(\.venv|venv|node_modules|dist|build|__pycache__|migrations)\//.test(rel)) return true
+  if (/\.(config|d)\.[jt]sx?$/.test(rel)) return true
+  return ['conftest.py', '__init__.py', 'setup.py'].includes(base)
 }
 
 /** The CLI router entry: a src/cli file that parses process.argv. */
@@ -124,38 +162,58 @@ const detectDocsMismatch: Heuristic = bundle => {
   )
 }
 
-// ── H3: CLI command module with no matching test ──────────────────────────────
+// ── H3: source module with no matching test (stack-aware) ─────────────────────
+//
+// Replaces the old CLI-command-only check and subsumes it (a CLI command is just
+// a TS module under src/). Fires on Python and TS/JS modules. Rust is
+// intentionally skipped — inline `#[cfg(test)]` / integration-test conventions
+// need more precise analysis before we can RECOMMEND a test file. A candidate is
+// only emitted when its proposed test path is inside the contract write ceiling,
+// so test-gaps never surface as REJECT noise.
+const detectTestGaps: Heuristic = bundle => {
+  const testHaystack = bundle.files
+    .filter(f => isTestFile(f.relativePath))
+    .map(f => f.relativePath.toLowerCase())
+    .join('\n')
 
-const detectCliCommandTestGaps: Heuristic = bundle => {
-  const commandRe = /^src\/cli\/commands\/([^/]+)\.ts$/
-  const testFiles = bundle.files.filter(f => f.relativePath.startsWith('tests/'))
-  const testHaystack = testFiles.map(f => f.relativePath.toLowerCase()).join('\n')
-
-  const gaps: DraftCandidate[] = []
+  const drafts: Array<{ rel: string; base: string; testPath: string }> = []
   for (const f of bundle.files) {
-    if (f.relativePath.endsWith('.test.ts')) continue
-    const m = commandRe.exec(f.relativePath)
-    if (!m) continue
-    const base = m[1]!
-    // Conservative: a substring match counts as covered (favors false negatives).
+    const rel = f.relativePath
+    if (isTestGapExcluded(rel)) continue
+
+    let testPath: string
+    if (/\.py$/.test(rel)) {
+      testPath = `tests/test_${moduleBase(rel)}.py`
+    } else if (/^src\/.*\.[jt]sx?$/.test(rel)) {
+      testPath = `tests/${moduleBase(rel)}.test.ts`
+    } else {
+      continue // .rs and everything else: no RECOMMENDED test-gap yet
+    }
+
+    const base = moduleBase(rel)
+    // Conservative: a substring match in any test path counts as covered.
     if (testHaystack.includes(base.toLowerCase())) continue
-    gaps.push(
-      draft(
-        'test-gap',
-        `Add a test for the '${base}' command`,
-        `The ${base} command has no test, so regressions in it ship silently.`,
-        [
-          `${f.relativePath} exists`,
-          `no file under tests/ references "${base}"`,
-        ],
-        [`tests/cli-${base}.test.ts`],
-        [pickCheckId(bundle)],
-        ['do not change the command implementation — add coverage only'],
-      ),
-    )
-    if (gaps.length >= MAX_PER_HEURISTIC) break
+    // Only emit when the proposed test file is writable under the contract —
+    // otherwise this would just be REJECT noise.
+    if (filesOutsideWriteCeiling([testPath], bundle.contract.allowedWritePaths).length > 0) continue
+
+    drafts.push({ rel, base, testPath })
   }
-  return gaps
+
+  // App-facing modules first, then cap so this stays a few small affordances.
+  drafts.sort((a, b) => priorityScore(b.base) - priorityScore(a.base))
+  return drafts.slice(0, TEST_GAP_CAP).map(d =>
+    draft(
+      'test-gap',
+      `Add a test for ${d.rel}`,
+      `${d.rel} has no test, so regressions in it ship silently.`,
+      [`${d.rel} exists`, `no test file references "${d.base}"`],
+      [d.testPath],
+      [pickCheckId(bundle)],
+      ['do not change the module implementation — add coverage only'],
+      'LOW',
+    ),
+  )
 }
 
 // ── Deterministic source ──────────────────────────────────────────────────────
@@ -163,7 +221,7 @@ const detectCliCommandTestGaps: Heuristic = bundle => {
 const HEURISTICS: Heuristic[] = [
   detectMissingVersion,
   detectDocsMismatch,
-  detectCliCommandTestGaps,
+  detectTestGaps,
 ]
 
 export class DeterministicSource implements CandidateSource {
