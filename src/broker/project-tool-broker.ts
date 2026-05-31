@@ -22,6 +22,7 @@ import type { CheckResult } from '../contracts/verification-preflight-report.js'
 import type { LoadedProjectContract } from '../projects/load-project-contract.js'
 import { runCapsuleProjectChecks } from './project-executor-actions.js'
 import { generatePatchPackage } from '../projects/generate-patch-package.js'
+import { detectNewlineEscapeCorruption } from '../projects/detect-artifact-corruption.js'
 import { verifySourceUnchanged } from '../projects/verify-source-unchanged.js'
 import type { PilotSnapshot } from '../projects/build-pilot-snapshot.js'
 import { extractCheckDiagnostics, formatDiagnosticSummary } from '../diagnostics/extract-check-diagnostics.js'
@@ -153,6 +154,13 @@ function handleWriteFile(state: BrokerState, input: unknown): string {
     throw new Error(
       `Write rejected: content contains forbidden marker '${FORBIDDEN_WRITE_CONTENT_MARKER}'`,
     )
+  }
+
+  // Artifact-integrity guard: refuse to materialize a source file whose line
+  // separators are escaped "\n" sequences (produces invalid, single-line code).
+  const corruption = detectNewlineEscapeCorruption(relPath, content)
+  if (corruption.corrupt) {
+    throw new Error(`Write rejected: ${corruption.reason}`)
   }
 
   const absPath = path.join(state.snapshot.workspacePath, relPath)
