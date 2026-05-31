@@ -3,6 +3,21 @@
 All notable, user-facing changes to Claude Powerplant. This file starts at the
 v0.2.12 release; earlier history lives in git tags and `docs/BUILD_LOG.md`.
 
+## v0.2.13
+
+Extends artifact newline-escaping protection to Markdown/prose deliverables.
+
+Powerplant now rejects suspicious document artifacts, including Markdown audit
+reports, when they appear to contain escaped line separators instead of real
+newlines. This closes a P1 gap where code artifacts were protected but primary
+audit deliverables such as `docs/*.md` could still materialize as single-line
+escaped text and pass review. Surfaced by a Steam-beta release-audit run whose
+`docs/STEAM_BETA_AUDIT.md` was written as one escaped physical line.
+
+Guard remains reject-not-repair; the conservative signature (many escaped `\n`,
+≤2 real newlines, a very long physical line) does not flag normal multi-section
+Markdown, and data files (JSON/CSV) remain excluded.
+
 ## v0.2.12
 
 Adds bounded Scout Mode as an additive capability.
