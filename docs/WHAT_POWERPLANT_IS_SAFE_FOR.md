@@ -12,7 +12,7 @@ Powerplant is a useful constrained patch/audit harness for real repositories whe
 
 ## What This Means
 
-Within those conditions, Powerplant reliably:
+Within those conditions, Powerplant is designed and dogfooded to:
 
 - Initializes a per-repo harness (`POLICY.yaml` + `VERIFY.yaml`) and validates the contract before any run.
 - Builds a sanitized snapshot that excludes dangerous artifacts (secrets, environments, build trees,
@@ -47,7 +47,7 @@ init → verify → run → review → approve
 
 ## Evidence Base
 
-Powerplant has been dogfooded across Python, Rust, frontend/static, Tauri hybrid, ML/research,
+Powerplant has been dogfooded in bounded runs across Python, Rust, frontend/static, Tauri hybrid, ML/research,
 manuscript, and code-write repositories. These runs exposed and fixed trust-kernel defects including
 exclude-boundary failures, review/approve classification mismatch, required-check semantics, misleading
 incomplete-run artifacts, and corrupt source-artifact materialization.
@@ -62,8 +62,9 @@ the release that fixed it.
 - **Verification under isolation.** The executor is network-disabled with dependency directories
   excluded, so dependency-bound checks (`cargo check`, `npx tsc`, `vitest`, `pytest`-with-deps) cannot
   resolve inside the sandbox and are run **advisory**. A hermetic structural check (e.g. a `grep` or
-  `compileall`) must carry the required gate. Promoting compile/test checks to required needs a shipped
-  capsule profile that provisions dependencies; that is not yet available for all stacks.
+  `compileall`) must carry the required gate. Promoting dependency-bound compile/test checks to required
+  needs either an already-hermetic repo check or a shipped capsule profile that provisions dependencies;
+  that is not yet available for all stacks.
 - **Structure, not correctness.** A required hermetic check confirms the artifact is well-formed, not
   that it is correct. Agent-authored code/tests can encode wrong assumptions about a repo's real APIs
   that the sandbox cannot catch, because it cannot execute against the real dependencies.
@@ -74,8 +75,8 @@ the release that fixed it.
 - **VERIFY command surface is narrow.** Commands run as plain subprocesses split on whitespace — no
   shell, pipes, redirection, quoting, or single arguments containing spaces.
 - **Approve operates on your working tree.** It writes to a `powerplant/<run-id>` branch in the real
-  project's git tree; the patch must be reviewed before approval, and merge to a mainline is a separate
-  human step.
+  project's git tree; approval should be run from a clean or intentionally staged working tree, the
+  patch must be reviewed before approval, and merge to a mainline is a separate human step.
 
 ## When Not To Use Powerplant
 
