@@ -54,6 +54,68 @@ function moduleBase(rel: string): string {
   return file.replace(/\.(py|tsx?|jsx?)$/, '')
 }
 
+// Directory-name segments that denote a writable test root.
+const TEST_DIR_SEGMENTS = ['tests', 'test', '__tests__']
+
+/**
+ * Writable test-root directories inferred from allowedWritePaths. A directory
+ * glob like `tests/**` or `src/engine/tests/**` yields the root `tests/` or
+ * `src/engine/tests/`. A single-file write path (e.g. `tests/AUDIT.md`) is NOT a
+ * root — so audit-only contracts yield none, and test-gaps stay suppressed.
+ */
+function testRootsFromCeiling(allowedWritePaths: readonly string[]): string[] {
+  const roots: string[] = []
+  for (const p of allowedWritePaths) {
+    const dir = /^(.*?)\/?\*\*?$/.exec(p)?.[1]
+    if (dir === undefined) continue // not a `…/**` (or `…/*`) directory glob
+    const lastSeg = dir.split('/').pop()
+    if (lastSeg && TEST_DIR_SEGMENTS.includes(lastSeg)) {
+      roots.push(dir.endsWith('/') ? dir : `${dir}/`)
+    }
+  }
+  return roots
+}
+
+/** Directory portion of a relative path with a trailing slash ('' for root files). */
+function dirOf(rel: string): string {
+  return rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : ''
+}
+
+/**
+ * Choose the best test root for a source file: prefer the root whose parent
+ * directory is the closest ancestor of the source (e.g. `src/engine/tests/` for
+ * `src/engine/foo.ts`), falling back to the first available root.
+ */
+function pickTestRoot(roots: string[], sourceDir: string): string | null {
+  if (roots.length === 0) return null
+  let best: string | null = null
+  let bestLen = -1
+  for (const root of roots) {
+    const parent = root.replace(/(^|\/)(tests|test|__tests__)\/$/, '$1')
+    if (sourceDir.startsWith(parent) && parent.length > bestLen) {
+      best = root
+      bestLen = parent.length
+    }
+  }
+  return best ?? roots[0]!
+}
+
+/**
+ * The test-file path for a source module, placed in the test root inferred from
+ * the contract's writable paths — instead of assuming top-level `tests/`.
+ * Returns null when no writable test root exists (caller suppresses the gap).
+ */
+function inferTestPath(rel: string, base: string, isPython: boolean, allowedWritePaths: readonly string[]): string | null {
+  const root = pickTestRoot(testRootsFromCeiling(allowedWritePaths), dirOf(rel))
+  if (root === null) return null
+  return isPython ? `${root}test_${base}.py` : `${root}${base}.test.ts`
+}
+
+/** Illustrative top-level path used as the example in a suppression note. */
+function defaultTestPath(base: string, isPython: boolean): string {
+  return isPython ? `tests/test_${base}.py` : `tests/${base}.test.ts`
+}
+
 /** A valid Python module identifier — importable as a normal module. */
 function isImportablePythonName(base: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(base)
@@ -217,23 +279,22 @@ function detectTestGaps(bundle: ScoutBundle): { candidates: DraftCandidate[]; su
     if (isTestGapExcluded(rel)) continue
 
     const isPython = /\.py$/.test(rel)
-    let testPath: string
-    if (isPython) {
-      testPath = `tests/test_${moduleBase(rel)}.py`
-    } else if (/^src\/.*\.[jt]sx?$/.test(rel)) {
-      testPath = `tests/${moduleBase(rel)}.test.ts`
-    } else {
+    if (!isPython && !/^src\/.*\.[jt]sx?$/.test(rel)) {
       continue // .rs and everything else: out of scope, not a ceiling suppression
     }
 
     const base = moduleBase(rel)
     // Conservative: a substring match in any test path counts as covered.
     if (testHaystack.includes(base.toLowerCase())) continue
-    // A real test-gap whose test file the contract forbids writing: suppress it
-    // (count for visibility) — never propose an out-of-ceiling file.
-    if (filesOutsideWriteCeiling([testPath], bundle.contract.allowedWritePaths).length > 0) {
+
+    // Place the test in the writable test root inferred from the contract
+    // (e.g. src/engine/tests/) instead of assuming top-level tests/.
+    const testPath = inferTestPath(rel, base, isPython, bundle.contract.allowedWritePaths)
+    // A real test-gap with no writable test root, or one the ceiling still
+    // forbids, is suppressed (counted for visibility) — never an out-of-ceiling file.
+    if (testPath === null || filesOutsideWriteCeiling([testPath], bundle.contract.allowedWritePaths).length > 0) {
       suppressedCount += 1
-      if (!suppressedExample) suppressedExample = testPath
+      if (!suppressedExample) suppressedExample = defaultTestPath(base, isPython)
       continue
     }
 
