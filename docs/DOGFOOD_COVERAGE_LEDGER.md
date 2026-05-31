@@ -13,22 +13,27 @@ Two risk modes are tracked:
 
 ---
 
+## Evidence rules
+
+- A class is **Covered** only when a sanitized run reached a recorded verdict. Evidence level:
+  - `observed` — a run ID is on file (cited in the Evidence column).
+  - `baseline` — asserted from prior work with no run ID in this ledger; not a fabricated reference.
+- Defect rows cite the release that fixed them; **verified live** means the fix was observed in a later run.
+- No row claims a verdict, fix, or behavior that was not directly observed.
+
 ## Coverage matrix
 
-| Repo class | Risk mode | Representative repo | Status | First proven |
-|------------|-----------|---------------------|--------|--------------|
-| Python trading bot | Mechanical | poly (hyperliquid/polymarket) | ✅ Covered | baseline |
-| Python simulator / LLM test-bench | Mechanical | pipeline (UEE) | ✅ Covered | v0.2.3–v0.2.5 |
-| Rust crypto workspace | Mechanical | scp | ✅ Covered | v0.2.5 |
+| Repo class | Risk mode | Representative repo | Status | Evidence |
+|------------|-----------|---------------------|--------|----------|
+| Python trading bot | Mechanical | poly (hyperliquid/polymarket) | ✅ Covered | observed `pp-run-…1427722` + baseline |
+| Python simulator / LLM test-bench | Mechanical | pipeline (UEE) | ✅ Covered | observed (v0.2.3–v0.2.5) |
+| Rust crypto workspace | Mechanical | scp | ✅ Covered | observed (v0.2.5) |
 | Static frontend / PWA | Mechanical | (baseline class) | ✅ Covered | baseline |
 | Static game subtree | Mechanical | (baseline class) | ✅ Covered | baseline |
-| Tauri / Vite / Rust hybrid (trading artifacts) | Mechanical | crypto-alpha-warroom | ✅ Covered | v0.2.9 → v0.2.10 |
-| Tauri / Vite / Rust hybrid (Steam game) | Mechanical | sinularity | ✅ Covered | v0.2.10 |
-| ML / research pipeline (result-ledger boundary) | Epistemic | pipeline (NN research) | ✅ Covered | v0.2.9 |
-| Research manuscript (no-claims boundary) | Epistemic | lcb_paper2 | ✅ Covered | v0.2.10 |
-
-"baseline" = established before this ledger existed; representative repo recorded where a run ID is
-on file, otherwise marked as a baseline class without a fabricated run reference.
+| Tauri / Vite / Rust hybrid (trading artifacts) | Mechanical | crypto-alpha-warroom | ✅ Covered | observed `pp-run-…8021229` |
+| Tauri / Vite / Rust hybrid (Steam game) | Mechanical | sinularity | ✅ Covered | observed `pp-run-…0335863` |
+| ML / research pipeline (result-ledger boundary) | Epistemic | pipeline (NN research) | ✅ Covered | observed (v0.2.9) |
+| Research manuscript (no-claims boundary) | Epistemic | lcb_paper2 | ✅ Covered | observed `pp-run-…1393275` |
 
 ---
 
@@ -45,10 +50,19 @@ except v0.2.10 (2026-05-31).
 | `project_finalize` accepted before all required checks passed | broker dogfood | require all required checks to pass before finalize | v0.2.8 |
 | Diff file count missed net-new file hunks (`+++ b/` vs `--- a/`) | review dogfood | count new-file hunks in diff file count | v0.2.9 |
 | CLI printed `PATCH.diff` / `VERIFICATION_REPORT.md` paths on incomplete runs where no patch package exists | crypto-alpha-warroom | gate artifact paths on `patchArtifactsWritten`; incomplete runs point to `RUN_CLASSIFICATION.json` | v0.2.10 |
+| `project_write_file` materialized escaped line separators verbatim → 16 KB single-line invalid-Python artifact that still "passed" (checks ran against the existing repo, not the new file) | poly (`pp-run-…1427722`) | `detectNewlineEscapeCorruption` rejects source writes with the escape signature (reject-not-repair) | v0.2.11 |
 
 The v0.2.10 fix is verified live: the lcb_paper2 first run (a real `FAILED_INCOMPLETE_AGENT_RUN`)
 printed "No patch produced — the agent run did not complete." pointing at `RUN_CLASSIFICATION.json`,
 not a dangling patch path.
+
+**Artifact-integrity finding (Track B → v0.2.11).** The poly defect is the sharpest class so far:
+verification reported PASS while the materialized artifact was corrupt — a *false* sense of
+verification. Underlying invariant: **verification must run against the exact artifact bytes that
+will be approved.** The guard rejects the corrupt write at the boundary, composing with the v0.2.10
+incomplete-run fix (rejected write → honest `FAILED_INCOMPLETE`, no corrupt patch). Reject-not-repair:
+Powerplant does not unescape content, which could corrupt legitimate string data. Detector validated
+against the real artifact (412 escaped `\n`, 1 real newline, 17139-char line).
 
 ---
 
@@ -94,6 +108,33 @@ reason. Proven on warroom (cargo/npx), sinularity (vitest/tsc), pipeline (ML dep
 
 ---
 
+## Deferred known issues
+
+- **KI-1** — VERIFY argv splits on whitespace; no single-arg-with-spaces support.
+- **KI-2** — bare `VERIFY.yaml` path alias not resolved.
+- **KI-3** — large unrelated-directory auto-exclude heuristic not implemented.
+- **Node/Rust capsule profile not shipped** — `cargo check`, `npx tsc`, `vitest`, `pytest`-with-deps stay
+  **advisory** under network isolation; hermetic structural checks carry the required gate (warroom,
+  sinularity DEFER-001).
+- **poly audit-invariant tests** — 9 of 17 skipped pending real-bot-API alignment, preserved on
+  `test/paper-mode-audit-invariants`; future focused branch `fix/paper-audit-invariants-real-api`.
+
+## Standing non-claims
+
+- No performance, alpha, or trading claims from any dogfood; trading / execution / strategy / risk-gate
+  paths were never modified.
+- No scientific-claim validation; manuscript audits report **provenance**, not correctness.
+- Audit runs do not modify product / manuscript / model logic — write scope is the audit deliverable.
+- A passing hermetic check asserts **structural integrity**, not correctness or claim validity.
+- No result-ledger / `best_score` data is exposed to the agent bundle.
+
+## Current decision state
+
+- **v0.2.11** — artifact-integrity fix (Track B) merged and released.
+- **Ledger** — this expansion (evidence boundaries + control-plane sections).
+- **poly real-API alignment** — preserved, deferred to a focused branch; not started.
+- **Wave 2 (discovery-budget architecture)** — closed.
+
 ## Not yet covered
 
 Candidate classes with no run on file yet:
@@ -105,5 +146,5 @@ Candidate classes with no run on file yet:
 
 ---
 
-_Last updated: 2026-05-31, at v0.2.10. Update this ledger whenever a new repo class is dogfooded or a
+_Last updated: 2026-05-31, at v0.2.11. Update this ledger whenever a new repo class is dogfooded or a
 dogfood-surfaced defect ships a fix._
