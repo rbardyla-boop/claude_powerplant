@@ -13,6 +13,10 @@ The safety substrate is solid:
 - `powerplant review` surfaces artifacts; `doctor` shows runtime state
 - One verification profile exists: `node-vitest-typescript-v1`
 
+The substrate has been exercised across nine repo classes spanning mechanical and epistemic risk,
+with each dogfood-surfaced defect tracked to the release that fixed it — see the
+[Dogfood Coverage Ledger](./DOGFOOD_COVERAGE_LEDGER.md).
+
 The gap: **the safe path is not yet the fast path.** A developer targeting a new project must
 hand-author YAML, has no guided way to merge a patch, no ergonomic review surface, no way to
 chain follow-up tasks, and Python/Go projects have no capsule.
