@@ -1,0 +1,27 @@
+projectId: claude_powerplant-9fca35e5
+includePaths:
+  - src/**
+  - tests/**
+  - package.json
+  - tsconfig.json
+excludePaths:
+  - .git/**
+  - node_modules/**
+  - .env
+  - .env.*
+  - '**/*.key'
+  - '**/*.pem'
+denyIfPresentAfterCopy:
+  - .env
+  - .git
+allowedReadPaths:
+  - src/**
+  - tests/**
+  - package.json
+  - tsconfig.json
+  - .powerplant/POLICY.yaml
+  - .powerplant/VERIFY.yaml
+  - README.md
+allowedWritePaths:
+  - src/**
+  - tests/**

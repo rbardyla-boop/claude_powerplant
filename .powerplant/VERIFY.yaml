@@ -1,0 +1,16 @@
+# VERIFY.yaml — check execution constraints:
+#
+#   Commands run as plain subprocesses (no shell). The command string is split on
+#   whitespace — e.g. "npm test" → ["npm", "test"]. Shell features are NOT
+#   supported: no &&, ||, pipes, redirection, quoting, or expansion.
+#
+#   Only PATH is forwarded to the subprocess. Tools must be installed system-wide
+#   (e.g. npm, python3, go, cargo). Shell builtins like "source" will not work.
+#   Use "python3 -m pytest" instead of bare "pytest" for portability.
+#
+verificationProfile: node-vitest-typescript-v1
+checks:
+  test:
+    command: npm test
+  typecheck:
+    command: npx tsc --noEmit
