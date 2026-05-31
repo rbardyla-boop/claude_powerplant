@@ -149,6 +149,61 @@ describe('DeterministicSource: stack-aware test gaps', () => {
   })
 })
 
+describe('DeterministicSource: candidate-quality ranking', () => {
+  const testGapTitles = (files: ScoutBundleFile[]): string[] =>
+    source.discover(bundle(files, 'py-demo', PY_TESTS_ONLY))
+      .filter(c => c.domain === 'test-gap')
+      .map(c => c.title)
+
+  const orderOf = (titles: string[], needle: string): number =>
+    titles.findIndex(t => t.includes(needle))
+
+  it('ranks an app-facing module ahead of a generic one', () => {
+    const titles = testGapTitles([
+      { relativePath: 'misc.py', content: 'x' },
+      { relativePath: 'provider.py', content: 'x' },
+    ])
+    expect(orderOf(titles, 'provider.py')).toBeLessThan(orderOf(titles, 'misc.py'))
+  })
+
+  it('penalizes hook/script-located modules below plain app modules', () => {
+    const titles = testGapTitles([
+      { relativePath: 'app_core.py', content: 'x' },
+      { relativePath: 'hooks/cleanup.py', content: 'x' },
+    ])
+    expect(orderOf(titles, 'app_core.py')).toBeLessThan(orderOf(titles, 'hooks/cleanup.py'))
+  })
+
+  it('down-ranks a hyphenated (non-importable) Python file below an importable module', () => {
+    const titles = testGapTitles([
+      { relativePath: 'weird-name.py', content: 'x' },
+      { relativePath: 'cleanup_legacy.py', content: 'x' },
+    ])
+    expect(orderOf(titles, 'cleanup_legacy.py')).toBeLessThan(orderOf(titles, 'weird-name.py'))
+  })
+
+  it('down-ranks but does NOT exclude awkward candidates (evidence preserved)', () => {
+    // Only an awkward candidate exists — it must still be emitted, not dropped.
+    const titles = testGapTitles([
+      { relativePath: '.claude/hooks/guard-sensitive-write.py', content: 'x' },
+    ])
+    expect(titles.some(t => t.includes('guard-sensitive-write'))).toBe(true)
+  })
+
+  it('keeps the .claude hook script out of the top 3 when better modules exist (Screenpipe case)', () => {
+    const titles = testGapTitles([
+      { relativePath: 'ai_provider.py', content: 'x' },
+      { relativePath: 'vault_sync.py', content: 'x' },
+      { relativePath: 'gui.py', content: 'x' },
+      { relativePath: '.claude/hooks/guard-sensitive-write.py', content: 'x' },
+    ])
+    expect(titles.length).toBeLessThanOrEqual(3)
+    expect(titles.some(t => t.includes('ai_provider.py'))).toBe(true)
+    expect(titles.some(t => t.includes('vault_sync.py'))).toBe(true)
+    expect(titles.some(t => t.includes('guard-sensitive-write'))).toBe(false)
+  })
+})
+
 describe('DeterministicSource: README/router mismatch', () => {
   it('flags a documented command the router does not handle', () => {
     const out = source.discover(bundle(
