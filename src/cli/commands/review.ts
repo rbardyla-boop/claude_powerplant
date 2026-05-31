@@ -3,8 +3,10 @@ import path from 'path'
 import { findRunDirectory } from '../../runs/find-run.js'
 import { printReviewTui } from '../terminal-output.js'
 import { parseVerificationReport } from '../parse-verification-report.js'
+import { matchesGlob } from '../../projects/build-sanitized-workspace.js'
 import type { RunClassification } from '../../contracts/project-tool-contracts.js'
 import type { ReviewRenderState } from '../../contracts/review-render.js'
+import type { CandidateScope } from '../../scout/derive-task.js'
 
 const SEVERITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 } as const
 type RiskSeverity = keyof typeof SEVERITY_ORDER
@@ -29,6 +31,33 @@ function parseDiff(raw: string): ReviewRenderState['diff'] {
   const linesAdded = (raw.match(/^\+(?!\+\+)/gm) ?? []).length
   const linesRemoved = (raw.match(/^-(?!--)/gm) ?? []).length
   return { files, linesAdded, linesRemoved, raw }
+}
+
+/** Files a unified diff touched, from `+++ b/<path>` and `--- a/<path>` headers. */
+function extractDiffFiles(raw: string): string[] {
+  const files = new Set<string>()
+  for (const m of raw.matchAll(/^\+\+\+ b\/(.+)$/gm)) files.add(m[1]!.trim())
+  for (const m of raw.matchAll(/^--- a\/(.+)$/gm)) files.add(m[1]!.trim())
+  files.delete('/dev/null')
+  return [...files].sort()
+}
+
+/** Compare a candidate-driven run's patch against the scope it declared. */
+function computeScopeDrift(
+  scope: CandidateScope,
+  diffRaw: string,
+): NonNullable<ReviewRenderState['scopeDrift']> {
+  const actual = extractDiffFiles(diffRaw)
+  const unexpected = actual.filter(f => !scope.expectedFiles.some(p => matchesGlob(f, p)))
+  const missing = scope.expectedFiles.filter(p => !actual.some(f => matchesGlob(f, p)))
+  return {
+    candidateId: scope.candidateId,
+    expected: scope.expectedFiles,
+    actual,
+    unexpected,
+    missing,
+    status: unexpected.length === 0 ? 'none' : 'drift',
+  }
 }
 
 function parseChecks(verificationMd: string): ReviewRenderState['checks'] {
@@ -146,11 +175,16 @@ export function buildReviewRenderState(runId: string, artifactDir: string): Revi
     }
   }
 
-  const diff = parseDiff(readFile(artifactDir, 'PATCH.diff'))
+  const patchRaw = readFile(artifactDir, 'PATCH.diff')
+  const diff = parseDiff(patchRaw)
   const checks = parseChecks(verificationMd)
   const risks = parseRisks(adversarialMd)
   const overallStatus = computeOverallStatus(checks, risks, classification, verificationMd)
   let nextAction = computeNextAction(overallStatus, runId)
+
+  // Scope drift only applies to candidate-driven runs (CANDIDATE_SCOPE.json present).
+  const candidateScope = readJson<CandidateScope>(artifactDir, 'CANDIDATE_SCOPE.json')
+  const scopeDrift = candidateScope ? computeScopeDrift(candidateScope, patchRaw) : undefined
 
   let terminationNote: string | null = null
   if (classification && !classification.artifactsComplete) {
@@ -164,7 +198,10 @@ export function buildReviewRenderState(runId: string, artifactDir: string): Revi
       ?? `Re-run the task (${classification.terminationReason})`
   }
 
-  return { runId, projectId, task, overallStatus, terminationNote, diff, checks, risks, nextAction }
+  return {
+    runId, projectId, task, overallStatus, terminationNote, diff, checks, risks, nextAction,
+    ...(scopeDrift ? { scopeDrift } : {}),
+  }
 }
 
 // ── Command ───────────────────────────────────────────────────────────────────

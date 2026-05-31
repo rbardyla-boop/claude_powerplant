@@ -13,6 +13,8 @@ import { makeRunArtifactDirectory } from '../../runs/find-run.js'
 import { printRunDisclosureSummary, printRunSummary } from '../terminal-output.js'
 import { loadSession } from '../../sessions/session-chain.js'
 import { buildSessionRunSnapshot } from '../../sessions/session-workspace.js'
+import { ScoutCandidateSchema } from '../../scout/scout-candidate.js'
+import { deriveTaskFromCandidate, CandidateScopeError, type CandidateScope } from '../../scout/derive-task.js'
 
 // Workspace must be under /tmp — Docker executor enforces this
 const WORKSPACE_TMP_BASE = '/tmp/powerplant-runs'
@@ -48,14 +50,8 @@ async function confirm(prompt: string): Promise<boolean> {
 export async function cmdRun(
   projectPath: string,
   task: string,
-  opts: { yes: boolean; sessionId?: string },
+  opts: { yes: boolean; sessionId?: string; candidatePath?: string },
 ): Promise<void> {
-  if (!task || !task.trim()) {
-    console.error('Error: task must not be empty.')
-    console.error('Usage: powerplant run <project-path> "<task description>"')
-    process.exit(1)
-  }
-
   let absPath: string
   try {
     absPath = validateProjectPath(projectPath)
@@ -70,6 +66,35 @@ export async function cmdRun(
     contract = loadProjectContract(absPath)
   } catch (err) {
     console.error(`Error: Contract load failed — ${String(err).replace('Error: ', '')}`)
+    process.exit(1)
+  }
+
+  // A scout candidate drives the run by deriving the task and bounding it to its
+  // declared scope. The candidate file is untrusted input: deriveTaskFromCandidate
+  // re-enforces the contract ceiling and fails closed if the candidate names
+  // files or checks the contract does not permit.
+  let candidateScope: CandidateScope | null = null
+  if (opts.candidatePath) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(path.resolve(opts.candidatePath), 'utf-8'))
+      const candidate = ScoutCandidateSchema.parse(raw)
+      const derived = deriveTaskFromCandidate(candidate, contract)
+      task = derived.task
+      candidateScope = derived.scope
+    } catch (err) {
+      if (err instanceof CandidateScopeError) {
+        console.error(`Error: ${err.message}`)
+      } else {
+        console.error(
+          `Error: Failed to load candidate from ${opts.candidatePath} — ` +
+          `${String(err).replace('Error: ', '')}`,
+        )
+      }
+      process.exit(1)
+    }
+  } else if (!task.trim()) {
+    console.error('Error: task must not be empty.')
+    console.error('Usage: powerplant run <project-path> "<task description>"')
     process.exit(1)
   }
 
@@ -172,6 +197,16 @@ export async function cmdRun(
 
   // Patch artifacts stored persistently under ~/.powerplant/runs/
   const patchDir = makeRunArtifactDirectory(contract.projectId, runId)
+
+  // Persist candidate scope so `review` can prove the patch stayed inside the
+  // candidate's declared files (scope-drift detection).
+  if (candidateScope) {
+    fs.writeFileSync(
+      path.join(patchDir, 'CANDIDATE_SCOPE.json'),
+      JSON.stringify(candidateScope, null, 2) + '\n',
+      'utf-8',
+    )
+  }
 
   console.log()
   console.log(`Run ID:    ${runId}`)
