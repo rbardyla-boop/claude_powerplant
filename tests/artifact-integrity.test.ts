@@ -84,6 +84,60 @@ describe('detectNewlineEscapeCorruption', () => {
   })
 })
 
+// A real multi-section Markdown audit report (real newlines).
+const CLEAN_MD = [
+  '# Steam Beta Release-Readiness Audit',
+  '',
+  '## Gate 1: Stability',
+  '- Boots without panic',
+  '- Save/load round-trips',
+  '',
+  '## Gate 2: Packaging',
+  '- No secrets in the bundle',
+  '- Version visible in-app',
+].join('\n')
+
+// The corruption signature on a Markdown deliverable: the whole report collapsed
+// to one physical line with literal "\n" escapes (mirrors the Steam-beta audit
+// run that materialized docs/STEAM_BETA_AUDIT.md as a single escaped line).
+const CORRUPT_MD =
+  '# Steam Beta Release-Readiness Audit\\n\\n' +
+  Array.from({ length: 30 }, (_, i) =>
+    `## Gate ${i}\\n- finding ${i}\\n- evidence ${i}`,
+  ).join('\\n\\n') +
+  '\\n'
+
+describe('detectNewlineEscapeCorruption: document deliverables', () => {
+  it('rejects a corrupt single-line escaped Markdown audit doc', () => {
+    const r = detectNewlineEscapeCorruption('docs/STEAM_BETA_AUDIT.md', CORRUPT_MD)
+    expect(r.corrupt).toBe(true)
+    expect(r.reason).toMatch(/real newline/i)
+  })
+
+  it('accepts a normal multi-section Markdown report', () => {
+    expect(detectNewlineEscapeCorruption('docs/STEAM_BETA_AUDIT.md', CLEAN_MD).corrupt).toBe(false)
+  })
+
+  it('accepts single-line Markdown with only a few escaped "\\n" snippets', () => {
+    // >200 chars, <=2 real newlines, but fewer than 5 escaped "\n" → below threshold.
+    const md =
+      '# Note\n\nThis documents an escape example like `a\\nb\\nc\\nd` in one code span, ' +
+      'padding text '.repeat(20) + 'end.'
+    expect(detectNewlineEscapeCorruption('docs/note.md', md).corrupt).toBe(false)
+  })
+
+  it('covers .markdown / .txt / .rst deliverable extensions', () => {
+    for (const ext of ['.markdown', '.txt', '.rst']) {
+      expect(detectNewlineEscapeCorruption(`docs/report${ext}`, CORRUPT_MD).corrupt).toBe(true)
+    }
+  })
+
+  it('still ignores single-line data files (JSON unaffected by the doc extension addition)', () => {
+    const json = '{"a":"x\\ny\\nz","b":"p\\nq\\nr","c":"1\\n2\\n3\\n4\\n5"}'.repeat(10)
+    expect(detectNewlineEscapeCorruption('docs/data.json', json).corrupt).toBe(false)
+  })
+})
+
 describe('clean multiline content diffs as real newlines', () => {
   it('produces a multi-line addition diff, not one escaped line', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pp-artifact-'))
