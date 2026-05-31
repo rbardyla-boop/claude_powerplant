@@ -46,6 +46,22 @@ export const ProposedCandidateSchema = z.object({
 })
 export type ProposedCandidate = z.infer<typeof ProposedCandidateSchema>
 
+// ── Verification coverage ─────────────────────────────────────────────────────
+// Whether the candidate's selected required check actually covers/syntax-checks
+// the expected write path — a pre-spend decision signal, NOT a gate. A candidate
+// stays RECOMMENDED regardless; this just marks how meaningful its verification is.
+//   strong         — a required check covers the expected path
+//   weak           — the selected required check does NOT cover the expected path
+//   advisory-only  — no required check was available; coverage rests on advisory
+export const COVERAGE_STRENGTHS = ['strong', 'weak', 'advisory-only'] as const
+export type CoverageStrength = (typeof COVERAGE_STRENGTHS)[number]
+
+export const VerificationCoverageSchema = z.object({
+  strength: z.enum(COVERAGE_STRENGTHS),
+  reason: z.string(),
+})
+export type VerificationCoverage = z.infer<typeof VerificationCoverageSchema>
+
 // ── ScoutCandidate ──────────────────────────────────────────────────────────
 // A normalized candidate: status assigned, notes recording why. This is the
 // artifact written to .scout/candidates.json and consumed by `run --candidate`.
@@ -53,6 +69,8 @@ export const ScoutCandidateSchema = ProposedCandidateSchema.extend({
   status: z.enum(SCOUT_STATUSES),
   // Human-readable reasons the verdict was assigned (e.g. why it was rejected).
   notes: z.array(z.string()),
+  // Optional so hand-edited / older candidate files still parse.
+  verificationCoverage: VerificationCoverageSchema.optional(),
 })
 export type ScoutCandidate = z.infer<typeof ScoutCandidateSchema>
 
@@ -74,6 +92,50 @@ export function checksNotDeclared(
   allowedChecks: Readonly<Record<string, unknown>>,
 ): string[] {
   return verification.filter(checkId => !(checkId in allowedChecks))
+}
+
+// ── Verification coverage classification ──────────────────────────────────────
+
+/**
+ * Heuristic: would running `command` plausibly validate/syntax-check `path`?
+ * A signal, not a guarantee — it inspects the command shape only.
+ */
+export function checkCommandCoversPath(command: string, path: string): boolean {
+  const cmd = command.toLowerCase()
+  // compileall recursively byte-compiles the project tree → covers any source under it.
+  if (cmd.includes('compileall')) return true
+  // py_compile only compiles the explicitly-named files → covered iff path is named.
+  if (cmd.includes('py_compile')) return command.includes(path)
+  // Test runners / type checkers discover & check test files broadly.
+  if (/\b(pytest|vitest|jest|mocha|tsc)\b/.test(cmd)
+    || cmd.includes('npm test') || cmd.includes('npm run test') || cmd.includes('npm run typecheck')) return true
+  if (/\bgo test\b/.test(cmd)) return /_test\.go$/.test(path)
+  // grep / echo / presence checks cover nothing.
+  return false
+}
+
+/**
+ * Classify how meaningfully a candidate's selected check verifies its expected
+ * write path. Decision signal for pre-spend review — never changes status.
+ */
+export function classifyVerificationCoverage(
+  verification: readonly string[],
+  expectedFiles: readonly string[],
+  allowedChecks: Readonly<Record<string, { command: string; required: boolean }>>,
+): VerificationCoverage {
+  const checkId = verification[0]
+  const path = expectedFiles[0] ?? '(unknown)'
+  const check = checkId ? allowedChecks[checkId] : undefined
+  if (!check) {
+    return { strength: 'weak', reason: `selected check \`${checkId ?? '(none)'}\` is not declared in VERIFY.yaml` }
+  }
+  if (!check.required) {
+    return { strength: 'advisory-only', reason: `selected check \`${checkId}\` is advisory — no required check available for \`${path}\`` }
+  }
+  if (checkCommandCoversPath(check.command, path)) {
+    return { strength: 'strong', reason: `required check \`${checkId}\` covers \`${path}\`` }
+  }
+  return { strength: 'weak', reason: `selected required check \`${checkId}\` does not appear to cover expected path \`${path}\`` }
 }
 
 // ── Normalization (the enforcement point) ─────────────────────────────────────
@@ -118,5 +180,11 @@ export function normalizeCandidate(
     status = 'RECOMMENDED'
   }
 
-  return { ...proposed, status, notes }
+  const verificationCoverage = classifyVerificationCoverage(
+    proposed.verification,
+    proposed.expectedFiles,
+    contract.allowedChecks,
+  )
+
+  return { ...proposed, status, notes, verificationCoverage }
 }

@@ -108,6 +108,9 @@ export async function cmdScout(rest: string[]): Promise<void> {
   if (firstActionable) {
     console.log('Scout recommends. You select. Review the candidates, then turn one into a patch:')
     console.log(`  powerplant run ${projectPath} --candidate .scout/candidates/${firstActionable.id}.json`)
+    if (firstActionable.verificationCoverage) {
+      console.log(`  Verification coverage: ${firstActionable.verificationCoverage.strength} — ${firstActionable.verificationCoverage.reason}`)
+    }
   } else {
     console.log('No actionable candidates. Scout never writes code or chains into a run on its own.')
   }

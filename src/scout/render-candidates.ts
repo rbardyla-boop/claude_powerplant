@@ -25,6 +25,9 @@ function renderCandidate(c: ScoutCandidate): string {
   for (const e of c.repoEvidence) lines.push(`  - ${e}`)
   lines.push(`- **Expected files:** ${c.expectedFiles.join(', ')}`)
   lines.push(`- **Verification:** ${c.verification.join(', ')}`)
+  if (c.verificationCoverage) {
+    lines.push(`- **Verification coverage:** ${c.verificationCoverage.strength} — ${c.verificationCoverage.reason}`)
+  }
   if (c.nonGoals.length > 0) {
     lines.push(`- **Non-goals:**`)
     for (const g of c.nonGoals) lines.push(`  - ${g}`)
