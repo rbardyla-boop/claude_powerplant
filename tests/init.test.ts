@@ -46,6 +46,8 @@ describe('generatePolicyYaml', () => {
       expect(excludes).toContain('**/venv/**')
       expect(excludes).toContain('**/__pycache__/**')
       expect(excludes).toContain('**/.pytest_cache/**')
+      // Scout's advisory output is excluded from every generated policy.
+      expect(excludes).toContain('.scout/**')
     }
   })
 
