@@ -465,6 +465,11 @@ function printReviewTuiCompact(state: ReviewRenderState): void {
   const fail = state.checks.filter(c => c.status === 'fail').length
   console.log(`Checks:  ${pass} pass, ${fail} fail`)
   console.log(`Risks:   ${state.risks.length}`)
+  if (state.scopeDrift) {
+    const d = state.scopeDrift
+    const summary = d.status === 'none' ? 'in-scope' : `DRIFT (${d.unexpected.length} unexpected)`
+    console.log(`Scope:   ${summary} [${d.candidateId}]`)
+  }
   console.log(`Next:    ${state.nextAction}`)
 }
 
@@ -565,6 +570,19 @@ export function printReviewTui(state: ReviewRenderState): void {
           ? (noColor ? risk.severity : yellow(risk.severity))
           : dim(risk.severity)
       lines.push(row(`[${sevStyled}] ${risk.finding.slice(0, Math.max(0, innerW - 12))}`))
+    }
+  }
+
+  // Scope drift (candidate-driven runs only)
+  if (state.scopeDrift) {
+    const d = state.scopeDrift
+    lines.push(section('Scope'))
+    const label = d.status === 'none'
+      ? (noColor ? 'in-scope' : green('in-scope'))
+      : (noColor ? 'DRIFT' : red('DRIFT'))
+    lines.push(row(`${label}  candidate: ${d.candidateId}   expected ${d.expected.length}, touched ${d.actual.length}`))
+    if (d.unexpected.length > 0) {
+      lines.push(row(dim(`unexpected: ${d.unexpected.join(', ').slice(0, Math.max(0, innerW - 13))}`)))
     }
   }
 

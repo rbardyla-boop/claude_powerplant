@@ -12,6 +12,7 @@ import { cmdDoctor } from './commands/doctor.js'
 import { cmdSetup } from './commands/setup.js'
 import { cmdSkill } from './commands/skill.js'
 import { cmdSession } from './commands/session.js'
+import { cmdScout } from './commands/scout.js'
 import { loadPowerplantEnv } from '../config/powerplant-home.js'
 
 // Resolve the Powerplant package root from this file's location so that
@@ -32,7 +33,8 @@ function printUsage(): void {
   console.log('  powerplant inspect <project-path>')
   console.log('  powerplant verify  <project-path>')
   console.log('  powerplant doctor  [project-path]')
-  console.log('  powerplant run     [--yes] [--session <id>] <project-path> "<task>"')
+  console.log('  powerplant scout   [project-path] [--json]')
+  console.log('  powerplant run     [--yes] [--session <id>] <project-path> ("<task>" | --candidate <file>)')
   console.log('  powerplant review  <run-id> [--json] [--diff]')
   console.log('  powerplant approve <run-id> [--dry-run] [--pr] [--extend-session <id>]')
   console.log('  powerplant session <subcommand>')
@@ -44,6 +46,7 @@ function printUsage(): void {
   console.log('  inspect  Show what Claude would see/modify without starting a session')
   console.log('  verify   Run approved checks in an isolated workspace (no agent, no network)')
   console.log('  doctor   Show runtime status and configuration (no API call)')
+  console.log('  scout    Discover small repo affordances (read-only); writes .scout/ candidates')
   console.log('  run      Run a task on a sanitized copy (or session workspace) and produce a patch')
   console.log('  review   Display artifacts from a completed run')
   console.log('  approve  Apply a reviewed run to a git branch with evidence hash')
@@ -100,9 +103,15 @@ switch (command) {
     break
   }
 
+  case 'scout': {
+    await cmdScout(rest)
+    break
+  }
+
   case 'run': {
     let yes = false
     let sessionId: string | undefined
+    let candidatePath: string | undefined
     const positionalArgs: string[] = []
     let i = 0
     while (i < rest.length) {
@@ -118,6 +127,15 @@ switch (command) {
         } else {
           i++
         }
+      } else if (a === '--candidate') {
+        const next = rest[i + 1]
+        if (next && !next.startsWith('-')) {
+          candidatePath = next
+          i += 2
+        } else {
+          console.error('Error: --candidate requires a path to a candidate JSON file.')
+          process.exit(1)
+        }
       } else if (a !== undefined && !a.startsWith('-')) {
         positionalArgs.push(a)
         i++
@@ -132,12 +150,18 @@ switch (command) {
       printUsage()
       process.exit(1)
     }
-    if (!task) {
-      console.error('Error: task is required.')
+    // A run is driven by EITHER a task string OR a scout candidate — never both,
+    // never neither. The candidate derives the task and bounds it to its scope.
+    if (!task && !candidatePath) {
+      console.error('Error: provide a task string or --candidate <file>.')
       printUsage()
       process.exit(1)
     }
-    await cmdRun(projectPath, task, { yes, sessionId })
+    if (task && candidatePath) {
+      console.error('Error: provide either a task string or --candidate, not both.')
+      process.exit(1)
+    }
+    await cmdRun(projectPath, task ?? '', { yes, sessionId, candidatePath })
     break
   }
 
