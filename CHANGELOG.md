@@ -3,6 +3,28 @@
 All notable, user-facing changes to Claude Powerplant. This file starts at the
 v0.2.12 release; earlier history lives in git tags and `docs/BUILD_LOG.md`.
 
+## Unreleased
+
+Feature Lab v1.5 foundation — additive, advisory, and evidence-only. No behavior
+gate changed, so these ship on the v0.2.14 line (no version bump).
+
+- **Candidate → trial traceability.** `run --candidate` now writes an evidence-only
+  `FEATURE_TRIAL.json` (candidate, expected files, non-goals, verification coverage,
+  scope ceiling). Coverage and ceiling are recomputed from the live contract, not
+  trusted from the candidate file; the record grants no writes and approves nothing.
+- **Review fidelity panel.** `powerplant review` surfaces, in JSON and TUI, file-scope
+  **drift** (expected vs touched) and **advisory** non-goal findings (heuristic
+  path/text match). Read-only and fail-safe; never changes PASS/FAIL or eligibility.
+- **Approve dry-run fidelity summary.** `powerplant approve --dry-run` prints the same
+  fidelity signals at the approval moment. Informational only — the approval gate is
+  unchanged.
+- **Docs.** Added `docs/FEATURE_LAB_V1_5.md` (claim boundary: shipped / advisory /
+  not-shipped) and a public-feedback documentation pass (README, CONTRIBUTING,
+  issue/PR templates, repo-setup suggestions).
+
+Not shipped (and not implied): automatic approval, strict drift blocking, the
+multi-advisor Council, an LLM candidate source, or autonomous feature development.
+
 ## v0.2.14
 
 Rejects quote-escaped source artifacts (Class-2 artifact corruption).

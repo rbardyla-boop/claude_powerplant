@@ -6,6 +6,10 @@
 > into "auto-build / auto-approve." Every "shipped" item below is backed by code
 > on `master` and a merged commit; everything else is explicitly labelled
 > not-shipped or precondition-gated.
+>
+> New here? Start with the [README](../README.md) for the overall workflow and the
+> bounded claim, and [WHAT_POWERPLANT_IS_SAFE_FOR.md](./WHAT_POWERPLANT_IS_SAFE_FOR.md)
+> for the full safety boundary.
 
 ## What Feature Lab is
 
