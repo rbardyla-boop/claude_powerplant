@@ -473,7 +473,8 @@ function printReviewTuiCompact(state: ReviewRenderState): void {
   if (state.featureTrial) {
     const t = state.featureTrial
     const faithful = t.drift === 'none' ? 'faithful' : `DRIFT (${t.unexpectedFiles.length} unexpected)`
-    console.log(`Trial:   ${t.candidateId} — ${faithful}, coverage ${t.verificationCoverage.strength}`)
+    const ng = t.nonGoalViolations.length > 0 ? `, ⚠${t.nonGoalViolations.length} non-goal` : ''
+    console.log(`Trial:   ${t.candidateId} — ${faithful}, coverage ${t.verificationCoverage.strength}${ng}`)
   } else if (state.featureTrialWarning) {
     console.log(`Trial:   ${state.featureTrialWarning}`)
   }
@@ -619,6 +620,14 @@ export function printReviewTui(state: ReviewRenderState): void {
     lines.push(row(`Faithful:   ${faithful}`))
     if (t.unexpectedFiles.length > 0) {
       lines.push(row(dim(`unexpected: ${t.unexpectedFiles.join(', ').slice(0, Math.max(0, innerW - 13))}`)))
+    }
+    if (t.nonGoalViolations.length > 0) {
+      const head = `Non-goals:  ${t.nonGoalViolations.length} possible violation(s) (advisory)`
+      lines.push(row(noColor ? head : yellow(head)))
+      for (const v of t.nonGoalViolations) {
+        const detail = `  "${v.nonGoal}" → ${v.files.join(', ')}`
+        lines.push(row(dim(detail.slice(0, Math.max(0, innerW - 2)))))
+      }
     }
   } else if (state.featureTrialWarning) {
     lines.push(section('Feature Trial'))

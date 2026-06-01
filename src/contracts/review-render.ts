@@ -58,6 +58,12 @@ export interface ReviewRenderState {
     /** Touched files not covered by any expected pattern — the drift signal. */
     unexpectedFiles: string[]
     drift: 'none' | 'drift'
+    /**
+     * Advisory, heuristic: undeclared touched files that appear to violate a
+     * declared non-goal (path/text match only — not semantic intent). Empty when
+     * none detected. Informational; never affects status or eligibility.
+     */
+    nonGoalViolations: Array<{ nonGoal: string; files: string[]; matched: string }>
   }
   /**
    * Set when FEATURE_TRIAL.json exists but could not be read/parsed. The trial
