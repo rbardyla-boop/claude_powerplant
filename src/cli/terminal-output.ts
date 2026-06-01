@@ -470,6 +470,13 @@ function printReviewTuiCompact(state: ReviewRenderState): void {
     const summary = d.status === 'none' ? 'in-scope' : `DRIFT (${d.unexpected.length} unexpected)`
     console.log(`Scope:   ${summary} [${d.candidateId}]`)
   }
+  if (state.featureTrial) {
+    const t = state.featureTrial
+    const faithful = t.drift === 'none' ? 'faithful' : `DRIFT (${t.unexpectedFiles.length} unexpected)`
+    console.log(`Trial:   ${t.candidateId} — ${faithful}, coverage ${t.verificationCoverage.strength}`)
+  } else if (state.featureTrialWarning) {
+    console.log(`Trial:   ${state.featureTrialWarning}`)
+  }
   console.log(`Next:    ${state.nextAction}`)
 }
 
@@ -584,6 +591,38 @@ export function printReviewTui(state: ReviewRenderState): void {
     if (d.unexpected.length > 0) {
       lines.push(row(dim(`unexpected: ${d.unexpected.join(', ').slice(0, Math.max(0, innerW - 13))}`)))
     }
+  }
+
+  // Feature Lab trial record (FEATURE_TRIAL.json) — informational, candidate-driven runs.
+  if (state.featureTrial) {
+    const t = state.featureTrial
+    const clip = (s: string) => s.slice(0, Math.max(0, innerW - 18))
+    lines.push(section('Feature Trial'))
+    lines.push(row(`Candidate:  ${clip(`${t.candidateId} — ${t.candidateTitle}`)}`))
+    lines.push(row(`Expected:   ${clip(t.expectedFiles.join(', ')) || '(none)'}`))
+    lines.push(row(`Non-goals:  ${clip(t.nonGoals.join('; ')) || '(none)'}`))
+    const strength = t.verificationCoverage.strength
+    const covStyled = strength === 'strong'
+      ? (noColor ? 'strong' : green('strong'))
+      : strength === 'weak'
+        ? (noColor ? 'weak' : yellow('weak'))
+        : (noColor ? strength : dim(strength))
+    // Clip the reason against the actual prefix ("Coverage:   <strength> — ") so
+    // a long reason never overflows the box border.
+    const covReason = t.verificationCoverage.reason.slice(0, Math.max(0, innerW - 15 - strength.length))
+    lines.push(row(`Coverage:   ${covStyled} — ${covReason}`))
+    lines.push(row(`Ceiling:    ${clip(t.scopeCeiling.join(', ')) || '(none)'}`))
+    lines.push(row(`Touched:    ${clip(t.actualFiles.join(', ')) || '(none)'}`))
+    const faithful = t.drift === 'none'
+      ? (noColor ? 'faithful to candidate' : green('faithful to candidate'))
+      : (noColor ? 'DRIFT' : red('DRIFT'))
+    lines.push(row(`Faithful:   ${faithful}`))
+    if (t.unexpectedFiles.length > 0) {
+      lines.push(row(dim(`unexpected: ${t.unexpectedFiles.join(', ').slice(0, Math.max(0, innerW - 13))}`)))
+    }
+  } else if (state.featureTrialWarning) {
+    lines.push(section('Feature Trial'))
+    lines.push(row(yellow(state.featureTrialWarning.slice(0, innerW))))
   }
 
   // Next action
