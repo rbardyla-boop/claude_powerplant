@@ -7,6 +7,7 @@ import { matchesGlob } from '../../projects/build-sanitized-workspace.js'
 import type { RunClassification } from '../../contracts/project-tool-contracts.js'
 import type { ReviewRenderState } from '../../contracts/review-render.js'
 import type { CandidateScope } from '../../scout/derive-task.js'
+import { FeatureTrialSchema } from '../../scout/feature-trial.js'
 
 const SEVERITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 } as const
 type RiskSeverity = keyof typeof SEVERITY_ORDER
@@ -57,6 +58,50 @@ function computeScopeDrift(
     unexpected,
     missing,
     status: unexpected.length === 0 ? 'none' : 'drift',
+  }
+}
+
+/**
+ * Read FEATURE_TRIAL.json (if present) and join it with the actual files the
+ * patch touched. Fail-safe and read-only: a missing file yields nothing; a
+ * present-but-malformed file yields a warning and no panel. This is purely
+ * informational — the result never feeds overallStatus, nextAction, or approve
+ * eligibility (those are computed independently in buildReviewRenderState).
+ */
+function readFeatureTrial(
+  artifactDir: string,
+  diffRaw: string,
+): { featureTrial?: NonNullable<ReviewRenderState['featureTrial']>; featureTrialWarning?: string } {
+  const p = path.join(artifactDir, 'FEATURE_TRIAL.json')
+  if (!fs.existsSync(p)) return {}
+
+  let parsedJson: unknown
+  try {
+    parsedJson = JSON.parse(fs.readFileSync(p, 'utf-8'))
+  } catch {
+    return { featureTrialWarning: 'FEATURE_TRIAL.json present but is not valid JSON — trial panel omitted.' }
+  }
+
+  const result = FeatureTrialSchema.safeParse(parsedJson)
+  if (!result.success) {
+    return { featureTrialWarning: 'FEATURE_TRIAL.json present but does not match the expected schema — trial panel omitted.' }
+  }
+
+  const trial = result.data
+  const actualFiles = extractDiffFiles(diffRaw)
+  const unexpectedFiles = actualFiles.filter(f => !trial.expectedFiles.some(pat => matchesGlob(f, pat)))
+  return {
+    featureTrial: {
+      candidateId: trial.candidateId,
+      candidateTitle: trial.candidateTitle,
+      expectedFiles: trial.expectedFiles,
+      nonGoals: trial.nonGoals,
+      verificationCoverage: trial.verificationCoverage,
+      scopeCeiling: trial.scopeCeiling,
+      actualFiles,
+      unexpectedFiles,
+      drift: unexpectedFiles.length === 0 ? 'none' : 'drift',
+    },
   }
 }
 
@@ -186,6 +231,10 @@ export function buildReviewRenderState(runId: string, artifactDir: string): Revi
   const candidateScope = readJson<CandidateScope>(artifactDir, 'CANDIDATE_SCOPE.json')
   const scopeDrift = candidateScope ? computeScopeDrift(candidateScope, patchRaw) : undefined
 
+  // Feature Lab trial panel (FEATURE_TRIAL.json) — informational only, never
+  // affects status/nextAction/eligibility computed above.
+  const { featureTrial, featureTrialWarning } = readFeatureTrial(artifactDir, patchRaw)
+
   let terminationNote: string | null = null
   if (classification && !classification.artifactsComplete) {
     const labels: Record<string, string> = {
@@ -201,6 +250,8 @@ export function buildReviewRenderState(runId: string, artifactDir: string): Revi
   return {
     runId, projectId, task, overallStatus, terminationNote, diff, checks, risks, nextAction,
     ...(scopeDrift ? { scopeDrift } : {}),
+    ...(featureTrial ? { featureTrial } : {}),
+    ...(featureTrialWarning ? { featureTrialWarning } : {}),
   }
 }
 
