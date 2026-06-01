@@ -7,7 +7,7 @@ import { matchesGlob } from '../../projects/build-sanitized-workspace.js'
 import type { RunClassification } from '../../contracts/project-tool-contracts.js'
 import type { ReviewRenderState } from '../../contracts/review-render.js'
 import type { CandidateScope } from '../../scout/derive-task.js'
-import { FeatureTrialSchema } from '../../scout/feature-trial.js'
+import { FeatureTrialSchema, detectNonGoalViolations } from '../../scout/feature-trial.js'
 
 const SEVERITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 } as const
 type RiskSeverity = keyof typeof SEVERITY_ORDER
@@ -90,6 +90,7 @@ function readFeatureTrial(
   const trial = result.data
   const actualFiles = extractDiffFiles(diffRaw)
   const unexpectedFiles = actualFiles.filter(f => !trial.expectedFiles.some(pat => matchesGlob(f, pat)))
+  const nonGoalViolations = detectNonGoalViolations(trial.nonGoals, actualFiles, trial.expectedFiles)
   return {
     featureTrial: {
       candidateId: trial.candidateId,
@@ -101,6 +102,7 @@ function readFeatureTrial(
       actualFiles,
       unexpectedFiles,
       drift: unexpectedFiles.length === 0 ? 'none' : 'drift',
+      nonGoalViolations,
     },
   }
 }
