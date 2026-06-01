@@ -13,6 +13,8 @@ import {
 } from '../../runs/apply-patch.js'
 import { loadSession, extendSession } from '../../sessions/session-chain.js'
 import { computeExtendedWorkspaceManifestHash } from '../../sessions/session-workspace.js'
+import { buildReviewRenderState } from './review.js'
+import { printApproveTrialSummary } from '../terminal-output.js'
 
 const REQUIRED_ARTIFACTS = ['PATCH.diff', 'SOURCE_MANIFEST.json', 'TASK.md', 'SESSION_SUMMARY.json'] as const
 
@@ -239,6 +241,9 @@ export async function cmdApprove(args: string[]): Promise<void> {
     console.log(`Branch to create:  ${branchName}`)
     console.log(`Commit subject:    feat: ${taskSubject}`)
     console.log(`Verification:      ${verificationStatus}`)
+    // Feature Trial fidelity signals — informational, identical to `review`.
+    // Reuses the same parser path; never affects the approval decision above.
+    printApproveTrialSummary(buildReviewRenderState(runId, runDir))
     return
   }
 
