@@ -643,3 +643,38 @@ export function printReviewTui(state: ReviewRenderState): void {
     console.log(line)
   }
 }
+
+/**
+ * Print the Feature Trial fidelity signals as a compact, plain-text block for
+ * the `approve --dry-run` report (same signals `review` shows: candidate,
+ * expected vs touched files, drift, verification coverage, non-goal advisories).
+ *
+ * Informational only. Emits nothing when there is no trial record, so a run
+ * without FEATURE_TRIAL.json keeps the prior approve output unchanged. A
+ * malformed trial prints a single fail-safe warning line. This function never
+ * affects approval — the caller prints it after all approval gates have passed.
+ */
+export function printApproveTrialSummary(state: ReviewRenderState): void {
+  if (state.featureTrial === undefined) {
+    if (state.featureTrialWarning) {
+      console.log(`Feature Trial:     (${state.featureTrialWarning})`)
+    }
+    return
+  }
+  const t = state.featureTrial
+  console.log(`Feature Trial:     ${t.candidateId} — ${t.candidateTitle}`)
+  console.log(`  Expected files:  ${t.expectedFiles.join(', ') || '(none)'}`)
+  console.log(`  Touched files:   ${t.actualFiles.join(', ') || '(none)'}`)
+  console.log(
+    `  Fidelity:        ${t.drift === 'none' ? 'faithful (no drift)' : `DRIFT — unexpected: ${t.unexpectedFiles.join(', ')}`}`,
+  )
+  console.log(`  Coverage:        ${t.verificationCoverage.strength} — ${t.verificationCoverage.reason}`)
+  if (t.nonGoalViolations.length === 0) {
+    console.log(`  Non-goals:       no advisory findings`)
+  } else {
+    console.log(`  Non-goals:       ${t.nonGoalViolations.length} possible violation(s) (advisory):`)
+    for (const v of t.nonGoalViolations) {
+      console.log(`    - "${v.nonGoal}" → ${v.files.join(', ')}`)
+    }
+  }
+}
