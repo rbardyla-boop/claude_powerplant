@@ -15,6 +15,7 @@ import { loadSession } from '../../sessions/session-chain.js'
 import { buildSessionRunSnapshot } from '../../sessions/session-workspace.js'
 import { ScoutCandidateSchema } from '../../scout/scout-candidate.js'
 import { deriveTaskFromCandidate, CandidateScopeError, type CandidateScope } from '../../scout/derive-task.js'
+import { buildFeatureTrial, writeFeatureTrialArtifact, type FeatureTrial } from '../../scout/feature-trial.js'
 
 // Workspace must be under /tmp — Docker executor enforces this
 const WORKSPACE_TMP_BASE = '/tmp/powerplant-runs'
@@ -74,6 +75,7 @@ export async function cmdRun(
   // re-enforces the contract ceiling and fails closed if the candidate names
   // files or checks the contract does not permit.
   let candidateScope: CandidateScope | null = null
+  let featureTrial: FeatureTrial | null = null
   if (opts.candidatePath) {
     try {
       const raw = JSON.parse(fs.readFileSync(path.resolve(opts.candidatePath), 'utf-8'))
@@ -81,6 +83,10 @@ export async function cmdRun(
       const derived = deriveTaskFromCandidate(candidate, contract)
       task = derived.task
       candidateScope = derived.scope
+      // Evidence-only trial record (Feature Lab traceability). Built only after
+      // the ceiling re-check above has passed; recomputes coverage/ceiling from
+      // the live contract, never trusts the candidate file.
+      featureTrial = buildFeatureTrial(candidate, contract)
     } catch (err) {
       if (err instanceof CandidateScopeError) {
         console.error(`Error: ${err.message}`)
@@ -206,6 +212,13 @@ export async function cmdRun(
       JSON.stringify(candidateScope, null, 2) + '\n',
       'utf-8',
     )
+  }
+
+  // Evidence-only Feature Lab trial record (superset of CANDIDATE_SCOPE.json:
+  // adds non-goals, recomputed verification coverage, the live scope ceiling,
+  // and an explicit non-approval claim). Grants nothing; for traceability only.
+  if (featureTrial) {
+    writeFeatureTrialArtifact(patchDir, featureTrial)
   }
 
   console.log()
