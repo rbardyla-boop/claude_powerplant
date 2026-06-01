@@ -2,9 +2,10 @@
 
 ## Supported Version
 
-The current development line is the `feat/stage2b-preflight` branch (Stage 2B).
-No stable release has been tagged. Security reports should target the current
-`master` or active development branch.
+Active development is on `master` (current line: `v0.2.14` plus the Feature Lab
+v1.5 foundation — see `CHANGELOG.md`). Powerplant is pre-1.0 and makes only
+bounded claims; there is no long-term-support release. Security reports should
+target the latest `master`.
 
 ## Reporting a Vulnerability
 

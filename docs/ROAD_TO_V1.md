@@ -107,6 +107,12 @@ At v1.5 the Council returns to **pressure-test candidates, not write code**. The
 adopted, stays bounded by the same normalization + ceiling enforcement that constrains the deterministic
 source today.
 
+> **Status note (v1.5 is partial, not shipped).** The v1.5 *foundation* — candidate→trial traceability
+> (`FEATURE_TRIAL.json`), the review fidelity panel, and the `approve --dry-run` fidelity summary — is
+> implemented and **advisory only**. The autonomy pieces above (Council, LLM CandidateSource, any strict/
+> blocking approval) are **not** shipped. See [FEATURE_LAB_V1_5.md](./FEATURE_LAB_V1_5.md) for the exact
+> shipped / advisory / not-shipped breakdown and the preconditions before strict controls.
+
 ## Version decision (pending)
 
 Untagged on purpose. After one clean live run:
