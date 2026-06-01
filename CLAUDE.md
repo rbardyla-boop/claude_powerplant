@@ -20,6 +20,12 @@ acceptance. Sprint-based architecture; each sprint is independently verified bef
 - Do not claim evidence that was not directly observed.
 - Do not refactor working code adjacent to a targeted fix.
 - Prefer deletion over new abstraction when both achieve the same result.
+- Compiled-language approval gate. For any Rust/Tauri (or other compiled-language) code fix, do not
+  approve a run unless a host-side compile — `cargo check`/`cargo build`, `tsc`, or equivalent —
+  passes on the materialized patch branch. Sandbox verify runs dep-bound checks advisory (network and
+  `node_modules`/`target` excluded), so byte-clean + review-PASS is necessary but not sufficient; the
+  host compile is the binding gate. (Origin: pp-run-1780272564172 shipped non-compiling Rust at
+  review-PASS because the cargo check was advisory.)
 
 ## Trust Boundary Routing
 

@@ -17,7 +17,11 @@ import path from 'path'
 import os from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { detectNewlineEscapeCorruption } from '../src/projects/detect-artifact-corruption.js'
+import {
+  detectNewlineEscapeCorruption,
+  detectQuoteEscapeCorruption,
+  detectArtifactCorruption,
+} from '../src/projects/detect-artifact-corruption.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -135,6 +139,78 @@ describe('detectNewlineEscapeCorruption: document deliverables', () => {
   it('still ignores single-line data files (JSON unaffected by the doc extension addition)', () => {
     const json = '{"a":"x\\ny\\nz","b":"p\\nq\\nr","c":"1\\n2\\n3\\n4\\n5"}'.repeat(10)
     expect(detectNewlineEscapeCorruption('docs/data.json', json).corrupt).toBe(false)
+  })
+})
+
+// Class 2 corruption: a MULTI-LINE source file whose quotes are escaped as \"
+// throughout (mirrors the Steam App-ID fix run pp-run-1780272564172 steam.rs).
+const CORRUPT_RS = [
+  'fn get_app_id() -> u32 {',
+  '    std::env::var(\\"STEAM_APP_ID\\").ok().and_then(|s| s.parse::<u32>().ok()).unwrap_or(480)',
+  '}',
+  'const A: &[&str] = &[\\"X\\", \\"Y\\", \\"Z\\", \\"W\\", \\"V\\"];',
+  'fn log() { eprintln!(\\"[Steam] init failed\\"); eprintln!(\\"[Steam] retry\\"); }',
+].join('\n')
+
+// Legit Rust: one string literal containing a couple of escaped quotes.
+const LEGIT_RS = [
+  'fn main() {',
+  '    let s = "he said \\"hello\\"";',
+  '    println!("{}", s);',
+  '    let name = "singularity";',
+  '}',
+].join('\n')
+
+// Legit Rust with MANY escaped quotes, but balanced ~1:1 by real quotes (not dominant).
+const LEGIT_RS_MANY = Array.from(
+  { length: 20 },
+  (_, i) => `    let s${i} = "value \\"${i}\\" end";`,
+).join('\n')
+
+describe('detectQuoteEscapeCorruption: escaped-quote source (Class 2)', () => {
+  it('rejects a multi-line .rs whose quotes are escaped throughout', () => {
+    const r = detectQuoteEscapeCorruption('src-tauri/src/steam.rs', CORRUPT_RS)
+    expect(r.corrupt).toBe(true)
+    expect(r.reason).toMatch(/escaped quote/i)
+  })
+
+  it('accepts normal Rust with a string containing a few escaped quotes', () => {
+    expect(detectQuoteEscapeCorruption('src/main.rs', LEGIT_RS).corrupt).toBe(false)
+  })
+
+  it('accepts Rust with many escaped quotes when real quotes are not dominated (ratio guard)', () => {
+    expect(detectQuoteEscapeCorruption('src/x.rs', LEGIT_RS_MANY).corrupt).toBe(false)
+  })
+
+  it('does not apply to JSON (escaped quotes are legitimate there)', () => {
+    const json = '{\\"a\\":\\"x\\",\\"b\\":\\"y\\",\\"c\\":\\"z\\",\\"d\\":\\"w\\",\\"e\\":\\"v\\"}'
+    expect(detectQuoteEscapeCorruption('config/data.json', json).corrupt).toBe(false)
+  })
+
+  it('covers the source extensions that need it (.ts/.go/.java)', () => {
+    for (const ext of ['.ts', '.go', '.java']) {
+      expect(detectQuoteEscapeCorruption(`f${ext}`, CORRUPT_RS).corrupt).toBe(true)
+    }
+  })
+})
+
+describe('detectArtifactCorruption: combined entry point', () => {
+  it('catches escaped-quote Rust (Class 2)', () => {
+    expect(detectArtifactCorruption('src-tauri/src/steam.rs', CORRUPT_RS).corrupt).toBe(true)
+  })
+  it('still catches escaped-newline Python (Class 1)', () => {
+    expect(detectArtifactCorruption('tests/test_x.py', CORRUPT_PY).corrupt).toBe(true)
+  })
+  it('still catches escaped-newline Markdown (Class 1 on doc)', () => {
+    expect(detectArtifactCorruption('docs/STEAM_BETA_AUDIT.md', CORRUPT_MD).corrupt).toBe(true)
+  })
+  it('passes clean multiline source and a clean Markdown doc', () => {
+    expect(detectArtifactCorruption('src/main.rs', LEGIT_RS).corrupt).toBe(false)
+    expect(detectArtifactCorruption('docs/x.md', CLEAN_MD).corrupt).toBe(false)
+  })
+  it('passes JSON with escaped quotes (outside both guards)', () => {
+    const json = '{\\"a\\":\\"x\\",\\"b\\":\\"y\\",\\"c\\":\\"z\\",\\"d\\":\\"w\\",\\"e\\":\\"v\\"}'
+    expect(detectArtifactCorruption('config/data.json', json).corrupt).toBe(false)
   })
 })
 

@@ -85,3 +85,56 @@ export function detectNewlineEscapeCorruption(
 
   return { corrupt: false }
 }
+
+/**
+ * Detects quote-escape corruption: a SOURCE file where double quotes have been
+ * escaped as literal `\"` throughout the code (the model emitted escaped
+ * JSON-string bytes), producing invalid source even though the file keeps normal
+ * multi-line structure. Distinct from the newline-collapse signature above —
+ * here the file can be fully multi-line, so that guard never fires.
+ *
+ * Scoped to SOURCE extensions only (not docs/JSON/TOML/YAML/CSV, where `\"` is
+ * legitimate). Flags only on DOMINANCE, so a normal string like
+ * `let s = "he said \"hi\"";` — a few escaped quotes amid many real ones — is
+ * never flagged. Requires BOTH:
+ *   - 8+ escaped `\"` sequences, AND
+ *   - escaped `\"` count >= 3x the count of unescaped `"`.
+ */
+export function detectQuoteEscapeCorruption(
+  relPath: string,
+  content: string,
+): CorruptionResult {
+  if (!CODE_EXTENSIONS.has(extensionOf(relPath))) {
+    return { corrupt: false }
+  }
+
+  const escapedQuotes = (content.match(/\\"/g) ?? []).length
+  const totalQuotes = (content.match(/"/g) ?? []).length
+  const unescapedQuotes = totalQuotes - escapedQuotes
+
+  if (escapedQuotes >= 8 && escapedQuotes >= unescapedQuotes * 3) {
+    return {
+      corrupt: true,
+      reason:
+        `'${relPath}' appears to have escaped quote characters: ` +
+        `${escapedQuotes} literal \\" sequences vs ${unescapedQuotes} real " — ` +
+        `that is invalid source. Re-send project_write_file with real " quotes, ` +
+        `not \\" escapes.`,
+    }
+  }
+
+  return { corrupt: false }
+}
+
+/**
+ * Runs all artifact-corruption checks and returns the first corruption found.
+ * Single entry point for the write boundary. Reject-not-repair.
+ */
+export function detectArtifactCorruption(
+  relPath: string,
+  content: string,
+): CorruptionResult {
+  const newline = detectNewlineEscapeCorruption(relPath, content)
+  if (newline.corrupt) return newline
+  return detectQuoteEscapeCorruption(relPath, content)
+}
