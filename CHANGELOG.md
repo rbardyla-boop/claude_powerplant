@@ -3,6 +3,30 @@
 All notable, user-facing changes to Claude Powerplant. This file starts at the
 v0.2.12 release; earlier history lives in git tags and `docs/BUILD_LOG.md`.
 
+## v0.2.14
+
+Rejects quote-escaped source artifacts (Class-2 artifact corruption).
+
+Powerplant now refuses to materialize a source file whose double quotes have
+been emitted as literal `\"` escapes throughout — invalid source that the model
+produced as escaped JSON-string bytes. Unlike the v0.2.11/v0.2.13 collapsed-
+single-line signature, this corruption keeps normal newline structure, so the
+earlier guard never fired. Surfaced by a Steam App-ID fix run whose
+`src-tauri/src/steam.rs` materialized with 32 literal `\"` and 0 real `"` yet
+passed review (the `cargo check` was advisory and did not run).
+
+The new check is scoped to source extensions and fires only on dominance (≥8
+escaped `\"` and escaped ≥3× unescaped `"`), so a normal string containing a few
+`\"` is never flagged; JSON/TOML/prose remain excluded. A single
+`detectArtifactCorruption` entry point now runs both the newline-escape and
+quote-escape checks at the one write boundary. Guard remains reject-not-repair —
+no auto-unescaping.
+
+Also institutionalizes a compiled-language approval rule (CLAUDE.md +
+`docs/STEAM_BETA_RELEASE_QUALITY.md`): for Rust/Tauri and other compiled-language
+fixes, a host-side compile must pass on the materialized patch branch before
+approval, because sandbox dep-bound checks run advisory.
+
 ## v0.2.13
 
 Extends artifact newline-escaping protection to Markdown/prose deliverables.

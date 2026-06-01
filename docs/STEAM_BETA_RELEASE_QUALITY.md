@@ -46,6 +46,7 @@ NON_CLAIM     — out of scope for Powerplant to assert (record, do not gate)
 - Launches from a clean install; no crash on boot / first run / scene transition / quit-restart.
 - No panics in release build; no missing assets.
 - Rust/Tauri checks: `cargo test`, `cargo check`, `npm run build`, a `tauri build`/`dev` smoke. *Mark a check required only if it is hermetic in the sandbox; otherwise advisory* (see the verification-coverage signal in Scout).
+- **Compiled-language approval rule (mandatory).** Sandbox verify runs `cargo`/`tauri`/dep-bound checks with network and `node_modules`/`target` excluded, so they are *advisory* — a patch that does not compile (or whose source bytes are corrupt) can still reach review-PASS. Therefore: **for any Rust/Tauri (or other compiled-language) code fix, do not approve unless a host-side `cargo check`/`cargo build` — or the equivalent compile step — passes on the materialized patch branch.** Byte-clean + review-PASS is necessary but not sufficient; the host compile is the binding gate. Proven by App-ID fix run pp-run-1780272564172, where correct design + review-PASS shipped non-compiling Rust because the cargo check was advisory and did not run.
 
 ## 3. First-10-minutes gate (the "indie quality" bar)
 Within 10 minutes a player can answer: What am I? What can I do? What is the
